@@ -1,128 +1,116 @@
-# YouTube Channel Monitor & AI Summarizer
+# YouTube Channel Monitor & Gemini Summarizer
 
-This set of scripts monitors specified YouTube channels for new video uploads, automatically fetches transcripts, generates AI-powered summaries (executive, detailed bullet points, key quotes) using Google Gemini, saves the results locally, and sends email notifications to configurable recipient lists per channel.
+This project provides a Python automation script designed to monitor specified YouTube channels for new video uploads. When a new video meeting certain criteria (like minimum duration) is detected, it fetches the transcript, generates summaries using the Google Gemini API, saves the summaries locally, and sends email notifications to configured recipients.
+
+## Overview
+
+The script performs the following actions:
+
+1.  **Monitors Multiple Channels:** Checks a list of specified YouTube channel IDs every hour (when run via cron).
+2.  **Detects New Videos:** Identifies videos published within the last hour (approximately).
+3.  **Fetches Video Details:** Retrieves video duration.
+4.  **Filters by Duration:** Optionally ignores videos shorter than a configurable minimum length (in minutes).
+5.  **Retrieves Transcripts:** Fetches the auto-generated or manual transcript for eligible new videos.
+6.  **Generates Summaries via Gemini:** Uses the Google Gemini API (e.g., Gemini 1.5 Pro) to create:
+    *   A short executive summary.
+    *   A detailed bulleted summary.
+    *   A list of key quotes or data points.
+7.  **Saves Locally:** Stores the generated summaries and video metadata in text files within a local `output/` directory. It also maintains a `processed_videos.json` file to track which videos have already been handled.
+8.  **Sends Email Notifications:** Dispatches cleanly formatted emails containing the video link, duration, and generated summaries.
+9.  **Channel-Specific Recipients:** Allows configuring different email recipient lists for different YouTube channels, with a fallback default list.
+10. **Cron Job Ready:** Includes a wrapper script (`run.sh`) designed to be called by a cron job, ensuring the correct virtual environment is activated.
+11. **Configurable:** Uses an INI configuration file (`config.ini`) for API keys, channel lists, email settings, Gemini prompts, and other parameters.
+12. **Logging:** Records script activities, successes, and errors to `monitor.log`.
 
 ## Features
 
-*   **Multi-Channel Monitoring:** Tracks several YouTube channels simultaneously.
-*   **Hourly Checks:** Designed to run periodically (e.g., every hour via cron/Task Scheduler).
-*   **Automatic Transcripts:** Fetches available English transcripts (manual or generated).
-*   **AI Summarization:** Uses Google Gemini (configurable model, e.g., 1.5 Pro) to create:
-    *   Concise Executive Summary
-    *   Detailed Bulleted Overview
-    *   Extraction of Key Quotes/Data Points
-*   **State Persistence:** Keeps track of processed videos in `processed_videos.json` to avoid redundant processing and API calls.
-*   **Local Storage:** Saves generated summaries to text files in the `output/` directory.
-*   **Customizable Email Notifications:**
-    *   Sends cleanly formatted emails upon finding and summarizing a new video.
-    *   Supports **different recipient lists for each monitored channel**.
-    *   Includes video link and all generated summaries/quotes in the email body.
-*   **Configuration Driven:** Uses `config.ini` for API keys, channel IDs, AI prompts, email settings, and recipient lists.
-*   **Cross-Platform:** Setup (`setup.py`) and execution (`run.py`) scripts are designed for Windows, macOS, and Linux.
-*   **Logging:** Records activities, successes, and errors to `monitor.log`.
-*   **Virtual Environment:** Includes a setup script to create a dedicated Python virtual environment (`.venv`) and install dependencies.
-*   **Scheduler-Friendly:** Provides a wrapper script (`run.py`) suitable for calling from cron (Linux/macOS) or Task Scheduler (Windows).
+*   Automated hourly monitoring of multiple YouTube channels.
+*   Leverages Google Gemini for AI-powered summarization.
+*   Customizable summary prompts via configuration.
+*   Configurable minimum video duration filter.
+*   Channel-specific email recipient routing.
+*   Local archival of summaries and processed video status.
+*   Designed for unattended execution via cron.
+*   Uses a Python virtual environment for dependency management.
+*   Detailed logging for diagnostics.
 
 ## Prerequisites
 
-1.  **Python:** Python 3.7 or higher installed.
-2.  **Pip:** Python's package installer (usually comes with Python).
-3.  **Google Cloud Account & YouTube Data API Key:**
+Before you begin, ensure you have the following:
+
+1.  **Python 3:** Python 3.8 or higher recommended.
+2.  **pip:** Python package installer (usually comes with Python 3).
+3.  **Google Cloud Account & YouTube Data API v3 Key:**
     *   Go to the [Google Cloud Console](https://console.cloud.google.com/).
     *   Create a project (or use an existing one).
     *   Enable the "YouTube Data API v3".
-    *   Create an API Key under "Credentials". Secure this key!
-    *   Add this key to `config.ini` (`youtube_api_key`).
-4.  **Google AI Studio & Gemini API Key:**
+    *   Create an API key under "Credentials".
+    *   **Important:** Restrict your API key (e.g., to specific IP addresses or HTTP referrers) for security if possible, although for server-side scripts IP restrictions might be most relevant. Note that this API has quotas.
+4.  **Google AI Studio Account & Gemini API Key:**
     *   Go to [Google AI Studio](https://aistudio.google.com/app/apikey).
-    *   Create an API Key. Secure this key!
-    *   Add this key to `config.ini` (`gemini_api_key`).
-5.  **YouTube Channel IDs:** Know the IDs of the channels you want to monitor (e.g., `UCxxxxxxxxxxxxxxxxxxxxxx`). You can find these using online tools like [Comment Picker's Channel ID tool](https://commentpicker.com/youtube-channel-id.php).
-6.  **Email Account (for Sending):** An email account (like Gmail or a custom domain) that can send emails via SMTP.
-    *   You'll need the SMTP server address, port, username, and password.
-    *   **Important (Gmail):** If using Gmail with 2-Factor Authentication (2FA), you'll likely need to generate an "App Password" to use in `config.ini` instead of your regular Gmail password.
+    *   Sign in with your Google account.
+    *   Create an API key. Note that Gemini API usage may incur costs depending on the model and usage volume.
+5.  **Email Account for Sending Notifications:**
+    *   An email account (e.g., Gmail, Outlook) capable of sending via SMTP.
+    *   **Crucially:** If using Gmail/Google Workspace with 2-Factor Authentication (2FA), you **must** generate an "App Password" specifically for this script. Do *not* use your regular account password in the config file. See [Google's App Password documentation](https://support.google.com/accounts/answer/185833).
+    *   Know your SMTP server details (hostname, port).
 
-## File Structure
+## Setup Instructions
 
-## Setup & Deployment Instructions
+1.  **Clone or Download:** Get the script files (`monitor_youtube.py`, `config.ini`, `requirements.txt`, `setup.sh`, `run.sh`) and place them in a dedicated directory on your server or machine where you intend to run the monitor.
 
-1.  **Download/Extract Files:** Place all the provided files (`config.ini`, `requirements.txt`, `setup.py`, `monitor_youtube.py`, `run.py`, `README.md`) into a dedicated directory on your system.
+2.  **Navigate to Directory:** Open a terminal or command prompt and change to the directory containing the downloaded files.
+    ```bash
+    cd /path/to/your/script/directory
+    ```
 
-2.  **Configure `config.ini`:**
-    *   Open `config.ini` in a text editor.
-    *   **[API_KEYS]**: Fill in your `youtube_api_key` and `gemini_api_key`.
-    *   **[CHANNELS]**: List the YouTube Channel IDs you want to monitor, separated by commas.
-    *   **[GEMINI]**: Review and customize the `model_name` and prompts if desired. Adjust `safety_settings` if needed.
-    *   **[EMAIL]**: Enter your SMTP server details (`smtp_server`, `smtp_port`, `smtp_user`, `smtp_password`, `sender_email`). Remember to use an App Password for Gmail if using 2FA.
-    *   **[EMAIL_RECIPIENTS_PER_CHANNEL]**:
-        *   For each channel ID from the `[CHANNELS]` section that needs specific recipients, add a line like: `UCxxxxxxxxxxxxxxxxxxxxxx = recipient1@example.com, team-a@example.com`
-        *   Optionally, set `default_recipients` for any channels listed in `[CHANNELS]` but *not* given specific recipients here. Leave blank or comment out if no default is needed.
-    *   **[SETTINGS]**: Review file paths/names if needed (defaults should be fine). `max_results_per_channel=1` is usually sufficient for hourly checks.
+3.  **Make Setup Script Executable:**
+    ```bash
+    chmod +x setup.sh
+    ```
 
-3.  **Run Setup Script:**
-    *   Open a terminal or command prompt.
-    *   Navigate (`cd`) to the directory where you saved the files.
-    *   Execute the setup script:
-        ```bash
-        python setup.py
-        # or potentially: python3 setup.py
-        ```
-    *   This command will:
-        *   Check your Python version.
-        *   Create a virtual environment named `.venv`.
-        *   Install all required Python packages from `requirements.txt` into `.venv`.
-        *   Create the `output` directory if it doesn't exist.
+4.  **Run Setup Script:** Execute the setup script. This will create a Python virtual environment named `.venv` in the current directory and install all required dependencies from `requirements.txt`.
+    ```bash
+    ./setup.sh
+    ```
+    Follow any prompts or address any errors reported by the script (e.g., missing Python 3).
 
-4.  **Manual Test Run:**
-    *   In the same terminal (after setup is complete), run the wrapper script:
-        ```bash
-        python run.py
-        # or potentially: python3 run.py
-        ```
-    *   This activates the virtual environment and executes `monitor_youtube.py`. Check the console output and `monitor.log` for activity. Look in the `output` directory for any generated summaries and check if emails were sent (if new videos were found).
+5.  **Configure `config.ini`:** This is the most crucial step. Open the `config.ini` file in a text editor **after** running `setup.sh`. Carefully fill in the following details:
 
-5.  **Schedule Regular Execution:**
+    *   **`[API_KEYS]`**:
+        *   `youtube_api_key`: Your YouTube Data API v3 key.
+        *   `gemini_api_key`: Your Google Gemini API key.
+    *   **`[CHANNELS]`**:
+        *   `channel_ids`: A comma-separated list of the YouTube Channel IDs you want to monitor (e.g., `UCxxxxxxxxxxxxxx,UCyyyyyyyyyyyyyy`). Ensure the case is correct (starts with `UC`).
+    *   **`[GEMINI]`**:
+        *   `model_name`: The Gemini model to use (e.g., `gemini-1.5-pro-latest`).
+        *   `prompt_...`: Review and customize the prompts if desired. **IMPORTANT:** Ensure these multi-line prompts use the **indented format** as shown in the template (no triple quotes).
+        *   `safety_settings` (Optional): Configure content safety thresholds if needed.
+    *   **`[EMAIL]`**:
+        *   `smtp_server`: Your email provider's SMTP server address (e.g., `smtp.gmail.com`).
+        *   `smtp_port`: The SMTP port (usually `587` for TLS).
+        *   `smtp_user`: Your full email address for sending.
+        *   `smtp_password`: Your email password or, preferably, an **App Password** (see Prerequisites).
+        *   `sender_email`: The email address that should appear in the "From" field.
+    *   **`[CHANNEL_RECIPIENTS]`**:
+        *   Use the exact YouTube Channel ID (case-sensitive) as the key (e.g., `UCxxxxxxxxxxxxxx = person1@example.com,team@example.com`).
+        *   Provide a comma-separated list of recipient emails for each specific channel.
+        *   `default_recipients`: A comma-separated list of emails to use for any channel in `[CHANNELS]` that doesn't have its own specific entry here. It's highly recommended to set a default.
+    *   **`[SETTINGS]`**:
+        *   Review file paths (`processed_videos_file`, `log_file`, `output_dir`). Relative paths are based on the script's directory.
+        *   `max_results_per_channel`: Usually `1` is sufficient for hourly checks.
+        *   `min_video_duration_minutes`: Set the minimum video length in minutes to process (e.g., `5`). Set to `0` to disable this filter and process all videos.
 
-    *   **Linux/macOS (using Cron):**
-        *   Open your crontab for editing: `crontab -e`
-        *   Add a line to run the script every hour (at minute 0). **Use absolute paths!**
-            ```cron
-            # Run YouTube Monitor every hour
-            0 * * * * /usr/bin/python3 /path/to/your/project/run.py >> /path/to/your/project/cron.log 2>&1
-            ```
-        *   **Replace:**
-            *   `/usr/bin/python3` with the result of `which python3` on your system.
-            *   `/path/to/your/project/` with the full, absolute path to the directory containing `run.py`.
-        *   The `>> ... cron.log 2>&1` part redirects cron's output/errors to a log file, useful for debugging the scheduler itself.
+6.  **Make Run Script Executable:**
+    ```bash
+    chmod +x run.sh
+    ```
 
-    *   **Windows (using Task Scheduler):**
-        *   Open Task Scheduler.
-        *   Click "Create Task" (not Basic Task, for more control).
-        *   **General Tab:** Give it a name (e.g., "YouTube Monitor"). Choose "Run whether user is logged on or not" and potentially "Run with highest privileges" if needed (usually not).
-        *   **Triggers Tab:** Click "New...". Select "Daily". Under "Advanced settings", check "Repeat task every" and choose "1 hour" for a duration of "Indefinitely". Ensure "Enabled" is checked. Click OK.
-        *   **Actions Tab:** Click "New...".
-            *   Action: `Start a program`
-            *   Program/script: `C:\path\to\your\python.exe` (Browse to your *system's* Python executable, e.g., often in `C:\Users\YourUser\AppData\Local\Programs\Python\Python3X\python.exe` or `C:\Program Files\Python3X\python.exe`).
-            *   Add arguments (optional): `C:\path\to\your\project\run.py` (Use the absolute path to `run.py`).
-            *   **Start in (optional):** `C:\path\to\your\project\` ( **IMPORTANT:** Set this to the absolute path of the directory *containing* `run.py`. This ensures the script can find `config.ini` etc.). Click OK.
-        *   **Conditions/Settings Tabs:** Adjust power settings, idle requirements, etc. as needed. Allow task to be run on demand. Stop the task if it runs longer than (e.g.) 1 hour.
-        *   Click OK. You may be prompted for your user password.
+## Usage
 
-## Output Files
+### Manual Execution
 
-*   **`monitor.log`:** Contains logs of script execution, checks performed, videos processed, summaries generated, email attempts, and any errors encountered. Check this file first for troubleshooting.
-*   **`processed_videos.json`:** A simple JSON file storing a list of YouTube video IDs that have been successfully processed. This prevents reprocessing.
-*   **`output/` directory:** Contains individual `.txt` files for each processed video, named like `VIDEO_ID_Channel_Name.txt`. Each file includes the channel/video info, executive summary, detailed summary, and key quotes.
+You can run the script manually to test it or process videos immediately:
 
-## Troubleshooting
-
-*   **API Key Errors:** Double-check the keys in `config.ini`. Ensure the correct APIs (YouTube Data API v3, Gemini API) are enabled in your Google Cloud/AI Studio projects. Check API quotas.
-*   **SMTP Authentication Errors:** Verify your SMTP username and password in `config.ini`. If using Gmail with 2FA, ensure you generated and are using an App Password. Check if your email provider requires specific security settings (like enabling "less secure app access", though STARTTLS used here is preferred). Check firewall rules if connecting to an internal SMTP server.
-*   **Module Not Found Errors:** Ensure you ran `python setup.py` successfully and are running the script via `python run.py` (which uses the virtual environment).
-*   **Script Fails in Cron/Task Scheduler but Works Manually:** This is often due to path issues or environment variables. Ensure you used **absolute paths** in your scheduler configuration. For Task Scheduler, setting the **"Start in" directory** is crucial. Check the cron/scheduler logs (e.g., `cron.log` specified in the cron example).
-*   **Permission Errors:** Ensure the user running the script (or the cron job/scheduled task) has permission to read the script files, write to the `output/` directory, `monitor.log`, and `processed_videos.json`.
-*   **Gemini Errors/Blocks:** Check the `monitor.log` for specific error messages from the Gemini API (e.g., quota limits, content safety blocks). You might need to adjust prompts or safety settings in `config.ini`.
-
-## License
-
-Consider adding a license file (e.g., `LICENSE`). The MIT license is a common permissive choice.
+```bash
+./run.sh
