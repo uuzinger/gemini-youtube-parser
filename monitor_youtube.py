@@ -149,7 +149,6 @@ processed_video_ids = set()
 # ... (get_video_details, get_latest_videos remain the same) ...
 # ... (get_transcript, generate_summary_with_gemini remain the same) ...
 # ... (save_summary_local, send_email_notification remain the same) ...
-# ... (get_channel_name remains the same) ...
 
 def sanitize_filename(filename):
     sanitized = re.sub(r'[\\/*?:"<>|]', "", filename)
@@ -347,6 +346,7 @@ def generate_summary_with_gemini(transcript, prompt):
         logging.error(f"General error during Gemini summary generation: {e}", exc_info=True)
         return f"Error: Failed to generate summary - {e}"
 
+
 def save_summary_local(video_id, video_title, duration_str, exec_summary, detailed_summary, key_quotes):
     # ... (save_summary_local content remains the same) ...
     try:
@@ -371,6 +371,7 @@ def save_summary_local(video_id, video_title, duration_str, exec_summary, detail
         logging.error(f"Error saving summary file for video {video_id}: {e}", exc_info=True)
         return None
 
+
 def send_email_notification(channel_name, video_title, video_id, duration_str, exec_summary, detailed_summary, key_quotes, recipient_list):
     # ... (send_email_notification content remains the same) ...
     if not recipient_list:
@@ -385,7 +386,8 @@ def send_email_notification(channel_name, video_title, video_id, duration_str, e
     <hr> <h2>Executive Summary</h2> <p>{exec_summary.replace(chr(10), "<br>")}</p>
     <hr> <h2>Detailed Summary</h2> <p>{detailed_summary.replace(chr(10), "<br>")}</p>
     <hr> <h2>Key Quotes/Data Points</h2> <p>{key_quotes.replace(chr(10), "<br>")}</p>
-    </body></html>"""
+    </body></html>
+    """
     message = MIMEMultipart('alternative')
     message['From'] = SENDER_EMAIL
     message['To'] = ", ".join(recipient_list)
@@ -408,16 +410,22 @@ def send_email_notification(channel_name, video_title, video_id, duration_str, e
 
 
 def get_channel_name(youtube, channel_id):
-    # ... (get_channel_name content remains the same) ...
+    """Fetches the display name of a YouTube channel."""
+    # Level 1 (4 spaces)
     try:
+        # Level 2 (8 spaces)
+        # *** FIX HERE: Added comma between keyword arguments ***
         channel_response = youtube.channels().list( part='snippet', id=channel_id ).execute()
-        if channel_response.get('items'): return channel_response['items'][0]['snippet']['title']
+        if channel_response.get('items'):
+            return channel_response['items'][0]['snippet']['title']
         else:
             logging.warning(f"Could not retrieve channel name for ID: {channel_id}")
             return channel_id
+    # Level 1 (4 spaces)
     except HttpError as e:
         logging.error(f"YouTube API error fetching channel name for {channel_id}: {e}", exc_info=True)
         return channel_id
+    # Level 1 (4 spaces)
     except Exception as e:
         logging.error(f"Unexpected error fetching channel name for {channel_id}: {e}", exc_info=True)
         return channel_id
@@ -479,6 +487,7 @@ def main(): # Level 0
             if duration_iso:
                 duration_seconds = parse_iso8601_duration(duration_iso)
                 formatted_duration_str = format_duration_seconds(duration_seconds)
+                logging.info(f"DEBUG DURATION for {video_id}: ISO='{duration_iso}', Seconds={duration_seconds}, MinThresholdSec={MIN_DURATION_MINUTES * 60}")
                 logging.info(f"Video '{video_title}' duration: {formatted_duration_str} ({duration_seconds} seconds)")
             else:
                 logging.warning(f"Could not determine duration for video '{video_title}'. Proceeding without duration check/info.")
@@ -486,6 +495,7 @@ def main(): # Level 0
             if MIN_DURATION_MINUTES > 0 and duration_seconds > 0:
                 min_duration_seconds = MIN_DURATION_MINUTES * 60
                 if duration_seconds < min_duration_seconds:
+                    logging.info(f"DEBUG SKIP DECISION for {video_id}: duration_seconds ({duration_seconds}) < min_duration_seconds ({min_duration_seconds}) = {duration_seconds < min_duration_seconds}")
                     logging.info(f"Video '{video_title}' ({formatted_duration_str}) is shorter than the minimum {MIN_DURATION_MINUTES} minutes. Skipping processing.")
                     processed_video_ids.add(video_id)
                     new_videos_processed_count += 1
@@ -546,21 +556,22 @@ def main(): # Level 0
 
             processed_video_ids.add(video_id)
             new_videos_processed_count += 1
-            # *** FIX HERE: Corrected syntax for time.sleep ***
             time.sleep(2)
         # End 'for video' loop
 
         time.sleep(3) # Between channels
     # End 'for channel_id' loop
 
-    # Finalization
+    # Finalization (Level 1 - 4 spaces)
     save_processed_videos()
     end_time = time.time()
     duration = end_time - start_time
     logging.info(f"--- YouTube Monitor Script Finished ---")
     logging.info(f"Processed {new_videos_processed_count} new videos in this run (including skipped due to duration/errors).")
     logging.info(f"Total execution time: {duration:.2f} seconds.")
+# End of main function definition (Level 0)
 
-# Script entry point
+# Script entry point (Level 0)
 if __name__ == "__main__":
+    # Level 1 (4 spaces)
     main()
