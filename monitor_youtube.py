@@ -11,6 +11,7 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
 import time
 import re # For cleaning filenames and parsing duration
+import markdown # for converting markdown responses to html formatting
 
 # Third-party libraries (install via requirements.txt)
 import google.generativeai as genai
@@ -379,13 +380,19 @@ def send_email_notification(channel_name, video_title, video_id, duration_str, e
         return
     subject = f"New YouTube Video Summary: [{channel_name}] {video_title}"
     video_url = f"https://www.youtube.com/watch?v={video_id}"
+
+    # Convert Markdown to HTML
+    exec_summary_html = markdown.markdown(exec_summary)
+    detailed_summary_html = markdown.markdown(detailed_summary)
+    key_quotes_html = markdown.markdown(key_quotes)
+
     body_html = f"""
     <html><head></head><body>
     <p>A new video has been posted on the '{channel_name}' YouTube channel:</p>
     <p> <strong>Title:</strong> {video_title}<br> {f'<strong>Duration:</strong> {duration_str}<br>' if duration_str else ''} <strong>Link:</strong> <a href="{video_url}">{video_url}</a> </p>
-    <hr> <h2>Executive Summary</h2> <p>{exec_summary.replace(chr(10), "<br>")}</p>
-    <hr> <h2>Detailed Summary</h2> <p>{detailed_summary.replace(chr(10), "<br>")}</p>
-    <hr> <h2>Key Quotes/Data Points</h2> <p>{key_quotes.replace(chr(10), "<br>")}</p>
+    <hr> <h2>Executive Summary</h2> <div>{exec_summary_html}</div>
+    <hr> <h2>Detailed Summary</h2> <div>{detailed_summary_html}</div>
+    <hr> <h2>Key Quotes/Data Points</h2> <div>{key_quotes_html}</div>
     </body></html>
     """
     message = MIMEMultipart('alternative')
@@ -393,6 +400,7 @@ def send_email_notification(channel_name, video_title, video_id, duration_str, e
     message['To'] = ", ".join(recipient_list)
     message['Subject'] = subject
     message.attach(MIMEText(body_html, 'html', 'utf-8'))
+    
     try:
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=60) as server:
             server.ehlo()
