@@ -10,14 +10,14 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
 import time
-import re # For cleaning filenames and parsing duration
-import markdown # for converting markdown responses to html formatting
+import re  # For cleaning filenames and parsing duration
+import markdown  # for converting markdown responses to html formatting
 
 # Third-party libraries (install via requirements.txt)
 import google.generativeai as genai
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound  # noqa: F401
 
 # --- Configuration Loading ---
 CONFIG_FILE = 'config.ini'
@@ -26,7 +26,10 @@ config = configparser.ConfigParser()
 config.optionxform = str
 
 if not os.path.exists(CONFIG_FILE):
-    print(f"ERROR: Configuration file '{CONFIG_FILE}' not found. Please create it based on the template.")
+    print(
+        f"ERROR: Configuration file '{CONFIG_FILE}' not found. "
+        "Please create it based on the template."
+    )
     sys.exit(1)
 
 # Add Debug Print for Config File Path
@@ -38,7 +41,7 @@ channel_recipients = {}
 default_recipients = []
 
 # --- Global Setting Variables ---
-MIN_DURATION_MINUTES = 0 # Default value
+MIN_DURATION_MINUTES = 0  # Default value
 
 try:
     # Use indented multi-line format for prompts in config.ini
@@ -50,15 +53,19 @@ try:
 
     # Channels to Monitor
     channel_ids_raw = config.get('CHANNELS', 'channel_ids', fallback=None)
-    CHANNEL_IDS = [cid.strip() for cid in channel_ids_raw.split(',') if cid.strip()] if channel_ids_raw else []
+    CHANNEL_IDS = (
+        [cid.strip() for cid in channel_ids_raw.split(',') if cid.strip()]
+        if channel_ids_raw
+        else []
+    )
 
     # Gemini Settings
     GEMINI_MODEL = config.get('GEMINI', 'model_name', fallback='gemini-1.5-pro-latest')
-    PROMPT_EXEC_SUMMARY = config.get('GEMINI', 'prompt_executive_summary', fallback="Executive summary prompt missing.")
-    PROMPT_DETAILED_SUMMARY = config.get('GEMINI', 'prompt_detailed_summary', fallback="Detailed summary prompt missing.")
-    PROMPT_KEY_QUOTES = config.get('GEMINI', 'prompt_key_quotes', fallback="Key quotes prompt missing.")
+    PROMPT_FULL_SUMMARY = config.get(
+        'GEMINI', 'prompt_full_summary', fallback="Summary prompt missing."
+    )
 
-    SAFETY_SETTINGS_RAW = config.get('GEMINI', 'safety_settings', fallback=None)
+   SAFETY_SETTINGS_RAW = config.get('GEMINI', 'safety_settings', fallback=None)
     SAFETY_SETTINGS = None
     if SAFETY_SETTINGS_RAW:
         try:
@@ -67,7 +74,10 @@ try:
                 for item in SAFETY_SETTINGS_RAW.split(',') if ':' in item
             }
         except Exception as e:
-            print(f"Warning: Could not parse safety_settings: {e}. Using default safety settings.")
+            print(
+                "Warning: Could not parse safety_settings: "
+                f"{e}. Using default safety settings."
+            )
             SAFETY_SETTINGS = None
 
     # Email SMTP Settings
@@ -77,7 +87,7 @@ try:
     SMTP_PASSWORD = config.get('EMAIL', 'smtp_password', fallback=None)
     SENDER_EMAIL = config.get('EMAIL', 'sender_email', fallback=None)
 
-    # Load Channel-Specific and Default Recipients
+ # Load Channel-Specific and Default Recipients
     if config.has_section('CHANNEL_RECIPIENTS'):
         for channel_id_key, emails_raw in config.items('CHANNEL_RECIPIENTS'):
             emails = [email.strip() for email in emails_raw.split(',') if email.strip()]
@@ -87,34 +97,67 @@ try:
                     print(f"INFO: Loaded default recipients: {', '.join(default_recipients)}")
                 else:
                     if channel_id_key.startswith("UC") and len(channel_id_key) == 24:
-                         channel_recipients[channel_id_key] = emails
-                         print(f"INFO: Loaded recipients for channel {repr(channel_id_key)}: {', '.join(emails)}")
+                        channel_recipients[channel_id_key] = emails
+                        print(
+                            "INFO: Loaded recipients for channel "
+                            f"{repr(channel_id_key)}: {', '.join(emails)}"
+                        )
                     else:
-                         print(f"WARNING: Ignoring invalid key in [CHANNEL_RECIPIENTS]: {repr(channel_id_key)}. Keys should be YouTube Channel IDs (starting with UC) or 'default_recipients'.")
+                        print(
+                            "WARNING: Ignoring invalid key in [CHANNEL_RECIPIENTS]: "
+                            f"{repr(channel_id_key)}. Keys should be YouTube Channel "
+                            "IDs (starting with UC) or 'default_recipients'."
+                        )
     else:
-        print("WARNING: Configuration section '[CHANNEL_RECIPIENTS]' is missing. Cannot determine email recipients.")
+        print(
+            "WARNING: Configuration section '[CHANNEL_RECIPIENTS]' is missing. "
+            "Cannot determine email recipients."
+        )
 
     # Script Settings
-    PROCESSED_VIDEOS_FILE = config.get('SETTINGS', 'processed_videos_file', fallback='processed_videos.json')
+    PROCESSED_VIDEOS_FILE = config.get(
+        'SETTINGS', 'processed_videos_file', fallback='processed_videos.json'
+    )
     LOG_FILE = config.get('SETTINGS', 'log_file', fallback='monitor.log')
     OUTPUT_DIR = config.get('SETTINGS', 'output_dir', fallback='output')
-    MAX_RESULTS_PER_CHANNEL = config.getint('SETTINGS', 'max_results_per_channel', fallback=1)
-    MIN_DURATION_MINUTES = config.getint('SETTINGS', 'min_video_duration_minutes', fallback=0)
-    print(f"INFO: Minimum video duration set to: {MIN_DURATION_MINUTES} minutes (0 means no minimum).")
-
+    MAX_RESULTS_PER_CHANNEL = config.getint(
+        'SETTINGS', 'max_results_per_channel', fallback=1
+    )
+    MIN_DURATION_MINUTES = config.getint(
+        'SETTINGS', 'min_video_duration_minutes', fallback=0
+    )
+    print(
+        "INFO: Minimum video duration set to: "
+        f"{MIN_DURATION_MINUTES} minutes (0 means no minimum)."
+    )
 
     # Validate Essential Configuration
     errors = []
     # ... (error checking code remains the same) ...
-    if not YOUTUBE_API_KEY or YOUTUBE_API_KEY == 'YOUR_YOUTUBE_DATA_API_V3_KEY': errors.append("Missing or placeholder 'youtube_api_key' in [API_KEYS]")
-    if not GEMINI_API_KEY or GEMINI_API_KEY == 'YOUR_GEMINI_API_KEY': errors.append("Missing or placeholder 'gemini_api_key' in [API_KEYS]")
-    if not CHANNEL_IDS: errors.append("Missing or empty 'channel_ids' in [CHANNELS]")
-    if not SMTP_SERVER: errors.append("Missing 'smtp_server' in [EMAIL]")
-    if not SMTP_USER: errors.append("Missing 'smtp_user' in [EMAIL]")
-    if not SMTP_PASSWORD or SMTP_PASSWORD == 'YOUR_EMAIL_PASSWORD_OR_APP_PASSWORD': errors.append("Missing or placeholder 'smtp_password' in [EMAIL]")
-    if not SENDER_EMAIL: errors.append("Missing 'sender_email' in [EMAIL]")
-    if not default_recipients and not channel_recipients: errors.append("No email recipients configured. Please define 'default_recipients' or specific channel recipients in the '[CHANNEL_RECIPIENTS]' section.")
-    elif not default_recipients: print("WARNING: No 'default_recipients' configured in [CHANNEL_RECIPIENTS]. Emails will only be sent for channels with specific recipient lists.")
+    if not YOUTUBE_API_KEY or YOUTUBE_API_KEY == 'YOUR_YOUTUBE_DATA_API_V3_KEY':
+        errors.append("Missing or placeholder 'youtube_api_key' in [API_KEYS]")
+    if not GEMINI_API_KEY or GEMINI_API_KEY == 'YOUR_GEMINI_API_KEY':
+        errors.append("Missing or placeholder 'gemini_api_key' in [API_KEYS]")
+    if not CHANNEL_IDS:
+        errors.append("Missing or empty 'channel_ids' in [CHANNELS]")
+    if not SMTP_SERVER:
+        errors.append("Missing 'smtp_server' in [EMAIL]")
+    if not SMTP_USER:
+        errors.append("Missing 'smtp_user' in [EMAIL]")
+    if not SMTP_PASSWORD or SMTP_PASSWORD == 'YOUR_EMAIL_PASSWORD_OR_APP_PASSWORD':
+        errors.append("Missing or placeholder 'smtp_password' in [EMAIL]")
+    if not SENDER_EMAIL:
+        errors.append("Missing 'sender_email' in [EMAIL]")
+    if not default_recipients and not channel_recipients:
+        errors.append(
+            "No email recipients configured. Please define 'default_recipients' "
+            "or specific channel recipients in the '[CHANNEL_RECIPIENTS]' section."
+        )
+    elif not default_recipients:
+        print(
+            "WARNING: No 'default_recipients' configured in [CHANNEL_RECIPIENTS]. "
+            "Emails will only be sent for channels with specific recipient lists."
+        )
 
     if errors:
         print("--- CONFIGURATION ERRORS ---")
@@ -124,22 +167,34 @@ try:
         sys.exit(1)
 
 except configparser.ParsingError as e:
-    print(f"ERROR: Failed to parse '{CONFIG_FILE}'. Check syntax, especially multi-line values (use indentation).")
+    print(
+        "ERROR: Failed to parse '{CONFIG_FILE}'. Check syntax, especially "
+        "multi-line values (use indentation)."
+    )
     print(f"Parser errors:\n{e}")
     sys.exit(1)
 except (configparser.NoSectionError, configparser.NoOptionError, ValueError) as e:
     print(f"ERROR reading configuration file '{CONFIG_FILE}': {e}")
     sys.exit(1)
 except Exception as e:
-    print(f"An unexpected error occurred during configuration loading: {e}")
+    print(
+        "An unexpected error occurred during configuration loading: {e}"
+    )  # noqa: E501
     sys.exit(1)
 
 # Logging Setup
 # ... (logging setup remains the same) ...
 log_dir = os.path.dirname(LOG_FILE)
-if log_dir and not os.path.exists(log_dir): os.makedirs(log_dir, exist_ok=True)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler(LOG_FILE, encoding='utf-8'), logging.StreamHandler()])
-
+if log_dir and not os.path.exists(log_dir):
+    os.makedirs(log_dir, exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding='utf-8'),
+        logging.StreamHandler(),
+    ],
+)
 
 # Global Variables
 processed_video_ids = set()
@@ -148,13 +203,13 @@ processed_video_ids = set()
 # ... (sanitize_filename, load/save_processed_videos remain the same) ...
 # ... (parse_iso8601_duration, format_duration_seconds remain the same) ...
 # ... (get_video_details, get_latest_videos remain the same) ...
-# ... (get_transcript, generate_summary_with_gemini remain the same) ...
-# ... (save_summary_local, send_email_notification remain the same) ...
+# ... (generate_summary_with_gemini, save_summary_local, send_email_notification remain the same) ...
 
 def sanitize_filename(filename):
     sanitized = re.sub(r'[\\/*?:"<>|]', "", filename)
     sanitized = re.sub(r'\s+', '_', sanitized)
     return sanitized[:150]
+
 
 def load_processed_videos():
     global processed_video_ids
@@ -170,9 +225,15 @@ def load_processed_videos():
                 logging.info(f"'{PROCESSED_VIDEOS_FILE}' is empty. Starting with an empty set.")
             else:
                 processed_video_ids = set(json.loads(content))
-                logging.info(f"Loaded {len(processed_video_ids)} processed video IDs from {PROCESSED_VIDEOS_FILE}")
+                logging.info(
+                    f"Loaded {len(processed_video_ids)} processed video IDs from "
+                    f"{PROCESSED_VIDEOS_FILE}"
+                )
     except json.JSONDecodeError:
-        logging.error(f"Error decoding JSON from {PROCESSED_VIDEOS_FILE}. Starting fresh.", exc_info=True)
+        logging.error(
+            f"Error decoding JSON from {PROCESSED_VIDEOS_FILE}. Starting fresh.",
+            exc_info=True,
+        )
         processed_video_ids = set()
     except Exception as e:
         logging.error(f"Error loading processed videos file: {e}", exc_info=True)
@@ -181,112 +242,111 @@ def load_processed_videos():
 def save_processed_videos():
     try:
         proc_dir = os.path.dirname(PROCESSED_VIDEOS_FILE)
-        if proc_dir and not os.path.exists(proc_dir): os.makedirs(proc_dir, exist_ok=True)
+        if proc_dir and not os.path.exists(proc_dir):
+            os.makedirs(proc_dir, exist_ok=True)
         with open(PROCESSED_VIDEOS_FILE, 'w', encoding='utf-8') as f:
             json.dump(list(processed_video_ids), f, indent=4)
-        logging.debug(f"Saved {len(processed_video_ids)} processed video IDs to {PROCESSED_VIDEOS_FILE}")
+        logging.debug(
+            f"Saved {len(processed_video_ids)} processed video IDs to "
+            f"{PROCESSED_VIDEOS_FILE}"
+        )
     except Exception as e:
         logging.error(f"Error saving processed videos file: {e}", exc_info=True)
 
+
 def parse_iso8601_duration(duration_string):
-    if not duration_string or not duration_string.startswith('PT'): return 0
+    if not duration_string or not duration_string.startswith('PT'):
+        return 0
     hours = re.search(r'(\d+)H', duration_string)
     minutes = re.search(r'(\d+)M', duration_string)
     seconds = re.search(r'(\d+)S', duration_string)
     total_seconds = 0
-    if hours: total_seconds += int(hours.group(1)) * 3600
-    if minutes: total_seconds += int(minutes.group(1)) * 60
-    if seconds: total_seconds += int(seconds.group(1))
+    if hours:
+        total_seconds += int(hours.group(1)) * 3600
+    if minutes:
+        total_seconds += int(minutes.group(1)) * 60
+    if seconds:
+        total_seconds += int(seconds.group(1))
     return total_seconds
 
 def format_duration_seconds(total_seconds):
-    if total_seconds < 0: return "00:00"
+    if total_seconds < 0:
+        return "00:00"
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
-    if hours > 0: return f"{int(hours):01d}:{int(minutes):02d}:{int(seconds):02d}"
-    else: return f"{int(minutes):02d}:{int(seconds):02d}"
+    if hours > 0:
+        return f"{int(hours):01d}:{int(minutes):02d}:{int(seconds):02d}"
+    else:
+        return f"{int(minutes):02d}:{int(seconds):02d}"
 
 def get_video_details(youtube, video_id):
     try:
-        video_response = youtube.videos().list( part='contentDetails', id=video_id ).execute()
+        video_response = youtube.videos().list(part='contentDetails', id=video_id).execute()
         if not video_response.get('items'):
             logging.warning(f"Could not fetch details for video ID: {video_id}")
             return None
         duration_iso = video_response['items'][0]['contentDetails']['duration']
         return duration_iso
     except HttpError as e:
-        logging.error(f"YouTube API error fetching details for video {video_id}: {e}", exc_info=True)
+        logging.error(
+            "YouTube API error fetching details for video "
+            f"{video_id}: {e}",
+            exc_info=True,
+        )
         return None
     except Exception as e:
-        logging.error(f"Unexpected error fetching details for video {video_id}: {e}", exc_info=True)
+        logging.error(
+            "Unexpected error fetching details for video "
+            f"{video_id}: {e}",
+            exc_info=True,
+        )
         return None
 
 def get_latest_videos(youtube, channel_id, max_results):
     try:
-        channel_response = youtube.channels().list( part='contentDetails', id=channel_id ).execute()
+        channel_response = youtube.channels().list(
+            part='contentDetails', id=channel_id
+        ).execute()
         if not channel_response.get('items'):
             logging.warning(f"Could not find channel details for ID: {channel_id}")
             return []
-        uploads_playlist_id = channel_response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
-        playlist_items_response = youtube.playlistItems().list( part='snippet,contentDetails', playlistId=uploads_playlist_id, maxResults=max_results ).execute()
+        uploads_playlist_id = channel_response['items'][0]['contentDetails'][
+            'relatedPlaylists'
+        ]['uploads']
+        playlist_items_response = youtube.playlistItems().list(
+            part='snippet,contentDetails',
+            playlistId=uploads_playlist_id,
+            maxResults=max_results,
+        ).execute()
         videos = []
         check_since = datetime.now(timezone.utc) - timedelta(hours=1, minutes=10)
         for item in playlist_items_response.get('items', []):
             video_id = item['contentDetails']['videoId']
             video_title = item['snippet']['title']
             published_at_str = item['snippet']['publishedAt']
-            published_at = datetime.fromisoformat(published_at_str.replace('Z', '+00:00'))
+            published_at = datetime.fromisoformat(
+                published_at_str.replace('Z', '+00:00')
+            )
             if published_at >= check_since:
-                 videos.append({ 'id': video_id, 'title': video_title, 'published_at': published_at, 'channel_id': channel_id })
-                 logging.debug(f"Video '{video_title}' (ID: {video_id}) published at {published_at} IS recent enough.")
+                videos.append(
+                    {
+                        'id': video_id,
+                        'title': video_title,
+                        'published_at': published_at,
+                        'channel_id': channel_id,
+                    }
+                )
+                logging.debug(
+                    "Video '{video_title}' (ID: {video_id}) published at "
+                    f"{published_at} IS recent enough."
+                )
             else:
-                 logging.debug(f"Video '{video_title}' (ID: {video_id}) published at {published_at} is older than threshold {check_since}, skipping.")
+                logging.debug(
+                    "Video '{video_title}' (ID: {video_id}) published at "
+                    f"{published_at} is older than threshold {check_since}, skipping."
+                )
         videos.sort(key=lambda x: x['published_at'], reverse=True)
-        count_found = len(playlist_items_response.get('items', []))
-        count_recent = len(videos)
-        logging.info(f"Checked {count_found} most recent playlist items for channel {channel_id}. Found {count_recent} published since {check_since}.")
-        return videos
-    except HttpError as e:
-        if e.resp.status == 403: logging.error(f"YouTube API quota error fetching videos for channel {channel_id}: {e}", exc_info=False)
-        else: logging.error(f"YouTube API HTTP error fetching videos for channel {channel_id}: {e}", exc_info=True)
-        return []
-    except Exception as e:
-        logging.error(f"Unexpected error fetching videos for channel {channel_id}: {e}", exc_info=True)
-        return []
-
-def get_transcript(video_id):
-    try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        try:
-            transcript = transcript_list.find_generated_transcript(['en', 'en-US', 'en-GB'])
-            logging.debug(f"Found English transcript for {video_id}")
-        except NoTranscriptFound:
-             logging.debug(f"No English transcript found for {video_id}. Checking for any generated transcript.")
-             available_langs = list(transcript_list._generated_transcripts.keys())
-             if not available_langs:
-                   logging.debug(f"No generated transcripts found for {video_id}. Checking for manual transcripts.")
-                   manual_langs = list(transcript_list._manually_created_transcripts.keys())
-                   if not manual_langs:
-                       logging.warning(f"No generated or manual transcripts found for video ID: {video_id}")
-                       return None
-                   else:
-                       transcript = transcript_list.find_manually_created_transcript(manual_langs)
-                       logging.info(f"Using first available manual transcript ({manual_langs[0]}) for {video_id}")
-             else:
-                transcript = transcript_list.find_generated_transcript(available_langs)
-                logging.info(f"Using first available generated transcript ({available_langs[0]}) for {video_id}")
-        transcript_text = " ".join([item.text for item in transcript.fetch()])
-        logging.info(f"Successfully fetched transcript (length: {len(transcript_text)} chars) for video ID: {video_id}")
-        return transcript_text
-    except TranscriptsDisabled:
-        logging.warning(f"Transcripts are disabled for video ID: {video_id}")
-        return None
-    except NoTranscriptFound:
-        logging.warning(f"No transcript entries found (manual or generated) via API for video ID: {video_id}")
-        return None
-    except Exception as e:
-        logging.error(f"Error fetching or processing transcript for video ID {video_id}: {e}", exc_info=True)
-        return None
+        count
 
 def generate_summary_with_gemini(transcript, prompt):
     # ... (generate_summary_with_gemini content remains the same) ...
