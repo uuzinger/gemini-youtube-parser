@@ -159,7 +159,7 @@ except Exception as e:
     sys.exit(1)
 
 
-# --- Logging Setup --- # This block is moved up to ensure 'logging' is configured before first use
+# --- Logging Setup ---
 log_dir = os.path.dirname(LOG_FILE)
 if log_dir and not os.path.exists(log_dir):
     try:
@@ -180,12 +180,27 @@ processed_video_ids = set()
 
 def sanitize_filename(filename):
     """Sanitizes a string to be safe for use as a filename."""
+    # Decode any potential non-UTF-8 bytes first if necessary (though the original issue seems to be encoding *to* latin-1)
+    try:
+        filename = filename.encode('utf-8').decode('utf-8') # Explicitly encode to utf-8 and decode back
+    except UnicodeDecodeError:
+        logging.warning(f"Could not decode filename string before sanitization: {filename}. Proceeding with raw string.")
+        pass # Proceed with potentially problematic string
+
     filename = filename.replace(u'\ufffd', '_') # Replace replacement character
     sanitized = re.sub(r'[\\/*?:"<>|]', "", filename) # Remove characters illegal in Windows/Linux filenames
     sanitized = re.sub(r'\s+', '_', sanitized) # Replace spaces with underscores
     sanitized = re.sub(r'_+', '_', sanitized) # Replace multiple underscores with a single one
     sanitized = sanitized.strip('_') # Remove leading/trailing underscores
+
+    # Replace specific problematic characters like \u2019 (right single quotation mark)
+    sanitized = sanitized.replace('\u2019', "'").replace('\u2018', "'") # Replace curly quotes with straight ones
+    sanitized = sanitized.replace('\u201c', '"').replace('\u201d', '"') # Replace curly double quotes with straight ones
+    sanitized = sanitized.replace('\u2013', '-').replace('\u2014', '--') # Replace various dashes
+
+    # Ensure the final filename is safe and within a reasonable length
     return sanitized[:150] # Truncate to a reasonable length
+
 
 def load_processed_videos():
     """Loads the set of already processed video IDs from a JSON file."""
@@ -354,6 +369,10 @@ def get_latest_videos(youtube, channel_id, max_results):
 
 def get_transcript(video_id):
     """Fetches the transcript for a video, prioritizing English or first available."""
+    if not video_id:
+         logging.warning("get_transcript called with empty video_id.")
+         return None
+
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
 
@@ -381,7 +400,7 @@ def get_transcript(video_id):
                        return None # No transcript available at all
 
         # Fetch the transcript text
-        transcript_text = " ".join([item['text'] for item in transcript.fetch()])
+        transcript_text = " ".join([item.text for item in transcript.fetch()])
         logging.info(f"Successfully fetched transcript (length: {len(transcript_text)} chars) for video ID: {video_id}")
         return transcript_text
 
@@ -398,7 +417,7 @@ def get_transcript(video_id):
 
 
 def generate_summary_with_gemini(transcript, prompt):
-    """Sends transcript and prompt to Gemini API to get a summary."""
+    """Sends transcript and prompt to Gemini AI to get a summary."""
     if not transcript:
         logging.error("generate_summary_with_gemini called with no transcript.")
         return "Error: No transcript provided."
@@ -406,200 +425,209 @@ def generate_summary_with_gemini(transcript, prompt):
          logging.error("generate_summary_with_gemini called with no prompt.")
          return "Error: No prompt provided."
 
-    try: # Outer try block covering initial setup and the retry loop
-        genai.configure(api_key=GEMINI_API_KEY) # Level 2
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
 
-        generation_config = { # Level 2
+        generation_config = {
             "temperature": 0.7,
             "top_p": 1,
             "top_k": 1,
             "max_output_tokens": 8192,
         }
 
-        safety_settings_mapped = {} # Level 2
-        if SAFETY_SETTINGS: # Level 2
-             try: # Level 3 - INNER try for initial safety settings parsing
+        safety_settings_mapped = None # Initialize as None
+        try: # INNER try for initial safety settings parsing
+            if SAFETY_SETTINGS:
                  # Attempt simple string-based mapping. Consult docs if errors occur.
-                 safety_settings_mapped = list(SAFETY_SETTINGS.items()) # Level 4
-             except Exception as e: # Level 3 - INNER except for safety settings parsing
-                 logging.error(f"Failed to map safety settings values: {e}. Attempting with original strings/defaults.", exc_info=False) # Level 4
-                 safety_settings_mapped = list(SAFETY_SETTINGS.items()) if SAFETY_SETTINGS else None # Level 4 - Ensure it's None or the original dict items on failure
+                 # The API expects a list of tuples: [(category, threshold), ...]
+                 safety_settings_mapped = list(SAFETY_SETTINGS.items())
+        except Exception as e: # INNER except for safety settings parsing
+             logging.error(f"Failed to map safety settings values: {e}. Attempting with original strings/defaults.", exc_info=False)
+             # On failure, keep safety_settings_mapped as None or try original dict items
+             # For now, let's ensure it's explicitly set to None if parsing the list of tuples fails
+             safety_settings_mapped = None
+             logging.warning("Proceeding without specific safety settings.")
 
 
-        model = genai.GenerativeModel( # Level 2
+        model = genai.GenerativeModel(
             model_name=GEMINI_MODEL,
             generation_config=generation_config,
             safety_settings=safety_settings_mapped # Pass mapped settings or None
         )
 
         # Prepare the full prompt
-        if "{transcript}" in prompt: # Level 2
-            full_prompt = prompt.format(transcript=transcript) # Level 3
-        else: # Level 2
-             logging.warning("Prompt does not contain '{transcript}' placeholder. Appending transcript to prompt.") # Level 3
-             full_prompt = prompt + "\n\n" + transcript # Level 3
+        if "{transcript}" in prompt:
+            full_prompt = prompt.format(transcript=transcript)
+        else:
+             logging.warning("Prompt does not contain '{transcript}' placeholder. Appending transcript to prompt.")
+             full_prompt = prompt + "\n\n" + transcript
 
-        logging.debug(f"Sending prompt to Gemini (first 200 chars): {full_prompt[:200]}...") # Level 2
-        logging.debug(f"Prompt length: {len(full_prompt)} characters.") # Level 2
+        logging.debug(f"Sending prompt to Gemini (first 200 chars): {full_prompt[:200]}...")
+        logging.debug(f"Prompt length: {len(full_prompt)} characters.")
 
 
-        max_retries = 3 # Level 2
-        retry_delay = 10 # Level 2
+        max_retries = 3
+        retry_delay = 10
 
-        for attempt in range(max_retries): # Level 2
-            try: # Level 3 - OUTER try of the retry loop (for generate_content call)
-                response = model.generate_content(full_prompt) # Level 4
+        for attempt in range(max_retries):
+            try: # OUTER try of the retry loop (for generate_content call)
+                response = model.generate_content(full_prompt)
 
                 # Check for prompt feedback (e.g., blocking before generation)
-                if response.prompt_feedback and response.prompt_feedback.block_reason: # Level 4
-                    block_reason = response.prompt_feedback.block_reason # Level 5
-                    safety_ratings_str = "N/A" # Level 5
-                    if response.prompt_feedback.safety_ratings: # Level 5
-                        safety_ratings_str = ", ".join([f"{rating.category}: {rating.probability}" for rating in response.prompt_feedback.safety_ratings]) # Level 6
-                    logging.warning(f"Gemini prompt blocked. Reason: {block_reason}. Ratings: {safety_ratings_str}") # Level 5
-                    return f"[Blocked Prompt - Reason: {block_reason}]" # Level 5 - Return exits the function
+                if response.prompt_feedback and response.prompt_feedback.block_reason:
+                    block_reason = response.prompt_feedback.block_reason
+                    safety_ratings_str = "N/A"
+                    if response.prompt_feedback.safety_ratings:
+                         safety_ratings_str = ", ".join([f"{rating.category}: {rating.probability}" for rating in response.prompt_feedback.safety_ratings])
+                    logging.warning(f"Gemini prompt blocked. Reason: {block_reason}. Ratings: {safety_ratings_str}")
+                    return f"[Blocked Prompt - Reason: {block_reason}]" # Return exits the function
 
                 # Check if any candidates were generated
-                if not response.candidates: # Level 4
-                    logging.warning("Gemini response has no candidates. Possibly blocked, empty, or API issue.") # Level 5
-                    finish_reason = "Unknown (No Candidates)" # Level 5
+                if not response.candidates:
+                    logging.warning("Gemini response has no candidates. Possibly blocked, empty, or API issue.")
+                    finish_reason = "Unknown (No Candidates)"
                     # Attempt to get finish reason if candidates list is just empty, not missing
-                    try: # Level 6
-                        if response.candidates is not None and len(response.candidates) > 0 and hasattr(response.candidates[0], 'finish_reason') and response.candidates[0].finish_reason is not None: # Level 7
-                             finish_reason = response.candidates[0].finish_reason # Level 8
-                        elif hasattr(response, 'usage_metadata') and hasattr(response.usage_metadata, 'finish_reason') and response.usage_metadata.finish_reason is not None: # Level 7
-                             finish_reason = response.usage_metadata.finish_reason # Level 8
-                    except Exception: # Level 6 - Ignore errors trying to get reason details
-                        pass # Level 7
+                    try:
+                        if response.candidates is not None and len(response.andidates) > 0 and hasattr(response.candidates[0], 'finish_reason') and response.candidates[0].finish_reason is not None:
+                             finish_reason = response.candidates[0].finish_reason
+                        elif hasattr(response, 'usage_metadata') and hasattr(response.usage_metadata, 'finish_reason') and response.usage_metadata.finish_reason is not None:
+                             finish_reason = response.usage_metadata.finish_reason
+                    except Exception: # Ignore errors trying to get reason details
+                        pass
 
-                    return f"[No Content Generated - Finish Reason: {finish_reason}]" # Level 5 - Return exits the function
+                    return f"[No Content Generated - Finish Reason: {finish_reason}]" # Return exits the function
 
 
                 # Check if the *first* candidate has content parts
-                candidate = response.candidates[0] # Level 4
-                if not candidate.content or not candidate.content.parts: # Level 4
-                    logging.warning("Gemini response candidate has no content parts.") # Level 5
-                    try: # Level 5 - INNER try for accessing response.text
-                        response_text = response.text.strip() # Level 6
-                        if not response_text: # Level 6
-                            return f"[Empty Content Parts - Finish Reason: {candidate.finish_reason}]" # Level 7 - Return exits the function
-                        else: # Level 6
-                             logging.warning(f"Candidate had no parts but response.text contained data (first 100 chars): {response_text[:100]}...") # Level 7
-                             return response_text # Level 7 - Return exits the function
-                    except ValueError: # Level 5 - INNER except for response.text (raised if content is blocked after initial check)
-                         logging.warning(f"Gemini response.text blocked or not available. Finish Reason: {candidate.finish_reason}") # Level 6
-                         return f"[Blocked Content or Empty Text - Finish Reason: {candidate.finish_reason}]" # Level 6 - Return exits the function
+                candidate = response.candidates[0]
+                if not candidate.content or not candidate.content.parts:
+                    logging.warning("Gemini response candidate has no content parts.")
+                    # Re-aligning the try block and its contents
+                    try:
+                        response_text = response.text.strip()
+                        if not response_text:
+                            return f"[Empty Content Parts - Finish Reason: {candidate.finish_reason}]" # Return exits the function
+                        # Corrected indentation for the 'else' block
+                        else:
+                             logging.warning(f"Candidate had no parts but response.text contained data (first 100 chars): {response_text[:100]}...")
+                             return response_text # Return exits the function
+                    # Corrected indentation for the 'except ValueError' block
+                    except ValueError:
+                         logging.warning(f"Gemini response.text blocked or not available.")
+                         return f"[Blocked Content or Empty Text]" # Return exits the function
 
-                # Execution continues here (Level 4) if the inner try/except block above completed without returning.
+                # Execution continues here if the inner try/except block above completed without returning.
 
                 # Check if the generation finished due to safety or other non-STOP reasons
-                if candidate.finish_reason != 1: # 1 typically means STOP. Check if not STOP. Level 4
-                     logging.warning(f"Gemini generation finished with non-standard reason: {candidate.finish_reason}") # Level 5
-                     if candidate.finish_reason == 3: # Reason 3 often indicates SAFETY stop. Level 5
-                          safety_ratings_str = "N/A" # Level 6
-                          if candidate.safety_ratings: # Level 6
-                              safety_ratings_str = ", ".join([f"{rating.category}: {rating.probability}" for rating in candidate.safety_ratings]) # Level 7
-                          logging.warning(f"Generation stopped due to safety reasons. Ratings: {safety_ratings_str}") # Level 6
+                if candidate.finish_reason != 1: # 1 typically means STOP. Check if not STOP.
+                     logging.warning(f"Gemini generation finished with non-standard reason: {candidate.finish_reason}")
+                     if candidate.finish_reason == 3: # Reason 3 often indicates SAFETY stop.
+                          safety_ratings_str = "N/A"
+                          if candidate.safety_ratings:
+                              safety_ratings_str = ", ".join([f"{rating.category}: {rating.probability}" for rating in candidate.safety_ratings])
+                          logging.warning(f"Generation stopped due to safety reasons. Ratings: {safety_ratings_str}")
                           # Return partial content if available, plus a warning message
-                          return f"[Generation Stopped by Safety - Reason: {candidate.finish_reason}] {response.text.strip()}" # Level 7 - Return exits the function
+                          return f"[Generation Stopped by Safety - Reason: {candidate.finish_reason}] {response.text.strip()}" # Return exits the function
                      else: # Handle other non-safety finish reasons if needed
-                          return f"[Generation Finished with Reason {candidate.finish_reason}] {response.text.strip()}" # Level 6 - Return exits the function
+                          return f"[Generation Finished with Reason {candidate.finish_reason}] {response.text.strip()}" # Return exits the function
 
 
                 # If all checks pass and finish_reason is STOP, return the generated text
-                logging.info(f"Successfully received Gemini response (length: {len(response.text)} chars).") # Level 4
-                return response.text.strip() # Level 4 - Return exits the function
+                logging.info(f"Successfully received Gemini response (length: {len(response.text)} chars).")
+                return response.text.strip() # Return exits the function
 
-            except Exception as e: # Level 3 - OUTER except for the retry loop (aligned with the try at Level 3)
-                logging.error(f"Gemini API call failed on attempt {attempt + 1}/{max_retries}: {e}", exc_info=False) # Level 4
-                if attempt < max_retries - 1: # Level 4
-                    logging.info(f"Retrying Gemini API call after {retry_delay} seconds...") # Level 5
-                    time.sleep(retry_delay) # Level 5
-                else: # Level 4 - Max retries reached
-                    logging.error("Max retries reached for Gemini API call.") # Level 5
-                    return f"Error: Gemini API call failed after {max_retries} attempts - {e}" # Level 5 - Return exits the function
+            except Exception as e: # OUTER except for the retry loop
+                logging.error(f"Gemini API call failed on attempt {attempt + 1}/{max_retries}: {e}", exc_info=False)
+                if attempt < max_retries - 1:
+                    logging.info(f"Retrying Gemini API call after {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                else: # Max retries reached
+                    logging.error("Max retries reached for Gemini API call.")
+                    return f"Error: Gemini API call fled after {max_retries} attempts - {e}" # Return exits the function
 
-        # This code is at Level 2, after the for loop.
+        # This code is after the for loop.
         # It's only reached if the for loop somehow completes without hitting a return *inside* any of the try/except blocks.
         # This shouldn't happen with the current logic, but add a final fallback return just in case.
-        logging.error("Gemini generation loop finished without returning. This indicates a logic error.") # Level 2
-        return "Error: Gemini generation logic error - loop finished unexpectedly." # Level 2
+        logging.error("Gemini generation loop finished without returning. This indicates a logic error.")
+        return "Error: Gemini generation logic error - loop finished unexpectedly."
 
-    except Exception as e: # Level 1 - OUTERMOST except (aligned with the try at Level 1)
-        logging.error(f"General error during Gemini summary generation: {e}", exc_info=True) # Level 2
-        return f"Error: Failed to generate summary - {e}" # Level 2
+    except Exception as e: # OUTERMOST except
+        logging.error(f"General error during Gemini summary generation: {e}", exc_info=True)
+        return f"Error: Failed to generate summary - {e}"
 
 
 # This is Level 0, starting a new function definition.
 def save_summary_local(video_id, video_title, duration_str, exec_summary, detailed_summary, key_quotes):
     """Saves the generated summaries to a local text file."""
-    try: # Level 1
-        if OUTPUT_DIR and not os.path.exists(OUTPUT_DIR): # Level 2
-            os.makedirs(OUTPUT_DIR, exist_ok=True) # Level 3
+    try:
+        if OUTPUT_DIR and not os.path.exists(OUTPUT_DIR):
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-        safe_title = sanitize_filename(video_title) # Level 2
+        # Sanitize the video title for use in the filename
+        safe_title = sanitize_filename(video_title)
 
-        filename = os.path.join(OUTPUT_DIR, f"{video_id}_{safe_title}.txt") # Level 2
+        filename = os.path.join(OUTPUT_DIR, f"{video_id}_{safe_title}.txt")
 
-        content = f"Video Title: {video_title}\n" # Level 2
-        content += f"Video ID: {video_id}\n" # Level 2
-        content += f"Video URL: https://www.youtube.com/watch?v={video_id}\n" # Level 2
-        content += f"Duration: {duration_str if duration_str else 'N/A'}\n" # Level 2
-        content += f"Processed Date: {datetime.now().isoformat()}\n\n" # Level 2
-        content += "--- Executive Summary ---\n" # Level 2
-        content += f"{exec_summary}\n\n" # Level 2
-        content += "--- Detailed Summary ---\n" # Level 2
-        content += f"{detailed_summary}\n\n" # Level 2
-        content += "--- Key Quotes/Data Points ---\n" # Level 2
-        content += f"{key_quotes}\n" # Level 2
+        # Initialize the content variable
+        content = f"Video Title: {video_title}\n"
+        content += f"Video ID: {video_id}\n"
+        content += f"Video URL: https://www.youtube.com/watch?v={video_id}\n"
+        content += f"Duration: {duration_str if duration_str else 'N/A'}\n"
+        content += f"Processed Date: {datetime.now().isoformat()}\n\n"
+        content += "--- Executive Summary ---\n"
+        content += f"{exec_summary}\n\n"
+        content += "--- Detailed Summary ---\n"
+        content += f"{detailed_summary}\n\n"
+        content += "--- Key Quotes/Data Points ---\n"
+        content += f"{key_quotes}\n"
 
-        with open(filename, 'w', encoding='utf-8') as f: # Level 2
-            f.write(content) # Level 3
+        # Open the file with utf-8 encoding, explicitly
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(content)
 
-        logging.info(f"Successfully saved summary to {filename}") # Level 2
-        return filename # Level 2
+        logging.info(f"Successfully saved summary to {filename}")
+        return filename
 
-    except Exception as e: # Level 1
-        logging.error(f"Error saving summary file for video {video_id}: {e}", exc_info=True) # Level 2
-        return None # Level 2
+    except Exception as e:
+        logging.error(f"Error saving summary file for video {video_id}: {e}", exc_info=True)
+        return None
 
 
 def send_email_notification(channel_name, video_title, video_id, duration_str, exec_summary, detailed_summary, key_quotes, recipient_list):
     """Sends an email notification with the video summaries."""
-    if not recipient_list: # Level 1
-        logging.warning(f"No recipients provided for video '{video_title}' (ID: {video_id}) from channel '{channel_name}'. Skipping email notification.") # Level 2
-        return # Level 2
+    if not recipient_list:
+        logging.warning(f"No recipients provided for video '{video_title}' (ID: {video_id}) from channel '{channel_name}'. Skipping email notification.")
+        return
 
-    subject = f"New YouTube Video Summary: [{channel_name}] {video_title}" # Level 1
-    video_url = f"https://www.youtube.com/watch?v={video_id}" # Level 1
+    subject = f"New YouTube Video Summary: [{channel_name}] {video_title}"
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
 
     # --- Convert Markdown Summaries to HTML ---
-    try: # Level 1
-        exec_summary_html = markdown.markdown(exec_summary) # Level 2
-        detailed_summary_html = markdown.markdown(detailed_summary) # Level 2
-        key_quotes_html = markdown.markdown(key_quotes) # Level 2
-        logging.debug(f"Successfully converted Markdown to HTML for video {video_id}.") # Level 2
-    except Exception as e: # Level 1
-        logging.error(f"Error converting Markdown to HTML for video {video_id}: {e}", exc_info=True) # Level 2
+    try:
+        exec_summary_html = markdown.markdown(exec_summary)
+        detailed_summary_html = markdown.markdown(detailed_summary)
+        key_quotes_html = markdown.markdown(key_quotes)
+        logging.debug(f"Successfully converted Markdown to HTML for video {video_id}.")
+    except Exception as e:
+        logging.error(f"Error converting Markdown to HTML for video {video_id}: {e}", exc_info=True)
         # Fallback: Use plain text summaries with basic newline replacement, wrapped in <pre>
-        logging.warning("Falling back to plain text for email body due to Markdown conversion error.") # Level 2
+        logging.warning("Falling back to plain text for email body due to Markdown conversion error.")
         # Escape HTML entities in fallback to prevent rendering issues
-        # import html # Already imported at top
-        exec_summary_escaped = html.escape(exec_summary) # Level 2
-        detailed_summary_escaped = html.escape(detailed_summary) # Level 2
-        key_quotes_escaped = html.escape(key_quotes) # Level 2
+        exec_summary_escaped = html.escape(exec_summary)
+        detailed_summary_escaped = html.escape(detailed_summary)
+        key_quotes_escaped = html.escape(key_quotes)
 
-        exec_summary_html = f"<pre>{exec_summary_escaped}</pre>" # Use <pre> to preserve formatting a bit # Level 2
-        detailed_summary_html = f"<pre>{detailed_summary_escaped}</pre>" # Level 2
-        key_quotes_html = f"<pre>{key_quotes_escaped}</pre>" # Level 2
+        exec_summary_html = f"<pre>{exec_summary_escaped}</pre>"# Use <pre> to preserve formatting a bit
+        detailed_summary_html = f"<pre>{detailed_summary_escaped}</pre>"
+        key_quotes_html = f"<pre>{key_quotes_escaped}</pre>"
 
 
     # Construct the HTML email body using the converted summaries
-    body_html = f""" # Level 1
+    body_html = f"""
     <html>
     <head></head>
     <body>
-        <p>A new video has been posted on the '{channel_name}' YouTube channel:</p>
+        <p>A nw video has been posted on the '{channel_name}' YouTube channel:</p>
         <p>
             <strong>Title:</strong> {video_title}<br>
             {f'<strong>Duration:</strong> {duration_str}<br>' if duration_str else ''}
@@ -618,257 +646,268 @@ def send_email_notification(channel_name, video_title, video_id, duration_str, e
         <p><i>Summaries generated by Gemini AI.</i></p>
     </body>
     </html>
-    """ # End of multi-line string literal # Level 1
+    """ # End of multi-line string literal
 
     # Create the email message
-    message = MIMEMultipart('alternative') # Level 1
-    message['From'] = SENDER_EMAIL # Level 1
-    message['To'] = ", ".join(recipient_list) # Join list for 'To' header # Level 1
-    message['Subject'] = subject # Level 1
+    message = MIMEMultipart('alternative')
+    message['From'] = SENDER_EMAIL
+    message['To'] = ", ".join(recipient_list) # Join list for 'To' header
+    message['Subject'] = subject
 
     # Attach the HTML body
-    message.attach(MIMEText(body_html, 'html', 'utf-8')) # Level 1
+    message.attach(MIMEText(body_html, 'html', 'utf-8'))
 
     # Send the email
-    try: # Level 1
+    try:
         # Use context manager for SMTP connection
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=60) as server: # Level 2
-            server.ehlo()  # Can be omitted # Level 3
-            server.starttls() # Secure the connection # Level 3
-            server.ehlo()  # Can be omitted # Level 3
-            server.login(SMTP_USER, SMTP_PASSWORD) # Level 3
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=60) as server:
+            server.ehlo()  # Can be omitted
+            server.starttls() # Secure the connection
+            server.ehlo()  # Can be omitted
+            server.login(SMTP_USER, SMTP_PASSWORD)
             # sendmail expects a list of recipients
-            server.sendmail(SENDER_EMAIL, recipient_list, message.as_string()) # Level 3
+            server.sendmail(SENDER_EMAIL, recipient_list, message.as_string())
 
-        logging.info(f"Successfully sent email notification for video ID: {video_id} to {', '.join(recipient_list)}") # Level 2
+        logging.info(f"Successfully sent email notification for video ID: {video_id} to {', '.join(recipient_list)}")
 
-    except smtplib.SMTPAuthenticationError: # Level 1
-        logging.error(f"SMTP Authentication Error for user {SMTP_USER}. Check username/password/app password.", exc_info=False) # Level 2
-    except smtplib.SMTPRecipientsRefused as e: # Level 1
-        logging.error(f"SMTP Recipient Error for video ID {video_id}. Server refused recipients: {e.recipients}", exc_info=False) # Level 2
-    except smtplib.SMTPServerDisconnected: # Level 1
-        logging.error("SMTP Server disconnected unexpectedly. Check server/port/network.", exc_info=False) # Level 2
-    except smtplib.SMTPException as e: # Level 1
-        logging.error(f"General SMTP error sending email for video ID {video_id}: {e}", exc_info=True) # Level 2
-    except Exception as e: # Level 1
-        logging.error(f"Unexpected error sending email for video ID {video_id}: {e}", exc_info=True) # Level 2
+    except smtplib.SMTPAuthenticationError:
+        logging.error(f"SMTP Authentication Error for user {SMTP_USER}. Check username/password/app password.", exc_info=False)
+    except smtplib.SMTPRecipientsRefused as e:
+        logging.error(f"SMTP Recipient Error for video ID {video_id}. Server refused recipients: {e.recipients}", exc_info=False)
+    except smtplib.SMTPServerDisconnected:
+        logging.error("SMTP Server disconnected unexpectedly. Check server/port/network.", exc_info=False)
+    except smtplib.SMTPException as e:
+        logging.error(f"General SMTP error sending email for video ID {video_id}: {e}", exc_info=True)
+    except Exception as e:
+        logging.error(f"Unexpected error sending email for video ID {video_id}: {e}", exc_info=True)
 
 
 def get_channel_name(youtube, channel_id):
     """Fetches the channel name for a given channel ID."""
-    try: # Level 1
-        channel_response = youtube.channels().list( # Level 2
-            part='snippet', # Level 3
-            id=channel_id # Level 3
-        ).execute() # Level 2
+    try:
+        channel_response = youtube.channels().list(
+            part='snippet',
+            id=channel_id
+        ).execute()
 
-        if channel_response.get('items'): # Level 2
-            return channel_response['items'][0]['snippet']['title'] # Level 3
-        else: # Level 2
-            logging.warning(f"Could not retrieve channel name for ID: {channel_id}") # Level 3
-            return channel_id # Return the ID if name not found # Level 3
+        if channel_response.get('items'):
+            return channel_response['items'][0]['snippet']['title']
+        else:
+            logging.warning(f"Could not retrieve channel name for ID: {channel_id}")
+            return channel_id # Return the ID if name not found
 
-    except HttpError as e: # Level 1
-        logging.error(f"YouTube API error fetching channel name for {channel_id}: {e}", exc_info=True) # Level 2
-        return channel_id # Return ID on error # Level 2
-    except Exception as e: # Level 1
-        logging.error(f"Unexpected error fetching channel name for {channel_id}: {e}", exc_info=True) # Level 2
-        return channel_id # Return ID on error # Level 2
+    except HttpError as e:
+        logging.error(f"YouTube API error fetching channel name for {channel_id}: {e}", exc_info=True)
+        return channel_id # Return ID on error
+    except Exception as e:
+        logging.error(f"Unexpected error fetching channel name for {channel_id}: {e}", exc_info=True)
+        return channel_id # Return ID on error
 
 
 # --- Main Execution ---
 def main():
-    start_time = time.time() # Level 1
-    new_videos_processed_count = 0 # Level 1
-    channel_names = {} # Cache channel names to avoid repeated API calls # Level 1
+    start_time = time.time()
+    new_videos_processed_count = 0
+    channel_names = {} # Cache channel names to avoid repeated API calls
 
-    # Log the script start message now that logging is configured
-    logging.info("--- Starting YouTube Monitor Script ---") # Level 1
-    logging.info(f"Minimum video duration threshold: {MIN_DURATION_MINUTES} minutes.") # Level 1
-    if default_recipients: # Level 1
-         logging.info(f"Default recipients: {', '.join(default_recipients)}") # Level 2
-    if channel_recipients: # Level 1
-         logging.info(f"Channel-specific recipients configured for {len(channel_recipients)} channels.") # Level 2
+    # Log the script start messge now that logging is configured
+    logging.info("--- Starting YouTube Monitor Script ---")
+    logging.info(f"Minimum video duration threshold: {MIN_DURATION_MINUTES} minutes.")
+    if default_recipients:
+         logging.info(f"Default recipients: {', '.join(default_recipients)}")
+    if channel_recipients:
+         logging.info(f"Channel-specific recipients configured for {len(channel_recipients)} channels.")
 
 
-    load_processed_videos() # Level 1
+    load_processed_videos()
 
-    try: # Level 1
+    try:
         # Build YouTube API client
-        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY, cache_discovery=False) # Level 2
-    except Exception as e: # Level 1
-        logging.error(f"Failed to build YouTube API client: {e}", exc_info=True) # Level 2
-        sys.exit(1) # Exit if API client cannot be built # Level 2
+        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY, cache_discovery=False)
+    except Exception as e:
+        logging.error(f"Failed to build YouTube API client: {e}", exc_info=True)
+        sys.exit(1) # Exit if API client cannot be built
 
     # Iterate through each channel to monitor
-    for channel_id in CHANNEL_IDS: # Level 1
+    for channel_id in CHANNEL_IDS:
         # Basic validation for channel ID format
-        if not channel_id or not channel_id.startswith("UC") or len(channel_id) != 24: # Level 2
-            logging.warning(f"Skipping invalid channel ID entry: {repr(channel_id)}") # Level 3
-            continue # Level 3
+        if not channel_id or not channel_id.startswith("UC") or len(channel_id) != 24:
+            logging.warning(f"Skipping invalid channel ID entry: {repr(channel_id)}")
+            continue
 
-        logging.info(f"--- Checking Channel ID: {channel_id} ---") # Level 2
+        logging.info(f"--- Checking Channel ID: {channel_id} ---")
 
         # Get channel name (cached)
-        if channel_id not in channel_names: # Level 2
-            channel_names[channel_id] = get_channel_name(youtube, channel_id) # Level 3
-            time.sleep(0.3) # Small delay between API calls # Level 3
+        # Use get with fallback in case name fetching failed
+        channel_name = channel_names.get(channel_id)
+        if channel_name is None: # Check if name is not yet cached or failed to fetch
+            channel_names[channel_id] = get_channel_name(youtube, channel_id)
+            channel_name = channel_names[channel_id] # Use the fetched name (or ID if failed)
+            time.sleep(0.3) # Small delay between API calls
 
-        channel_name = channel_names.get(channel_id, channel_id) # Use get with fallback in case name fetching failed # Level 2
-        logging.info(f"Processing channel: '{channel_name}' ({channel_id})") # Level 2
+        logging.info(f"Processing channel: '{channel_name}' ({channel_id})")
 
         # Get the latest videos for this channel
-        latest_videos = get_latest_videos(youtube, channel_id, MAX_RESULTS_PER_CHANNEL + 5) # Fetch slightly more than needed to ensure we find recent ones # Level 2
+        latest_videos = get_latest_videos(youtube, channel_id, MAX_RESULTS_PER_CHANNEL + 5) # Fetch slightly more than needed to ensure we find recent ones
 
-        if not latest_videos: # Level 2
-            logging.info(f"No new recent videos found for channel '{channel_name}'.") # Level 3
-            continue # Level 3
+        if not latest_videos:
+            logging.info(f"No new recent videos found for channel '{channel_name}'.")
+            continue
 
         # Process each potential new video (sorted by publish date)
-        for video in latest_videos: # Level 2
-            video_id = video['id'] # Level 3
-            video_title = video['title'] # Level 3
-            video_published_at = video['published_at'] # Level 3
+        for video in latest_videos:
+            video_id = video['id']
+            video_title = video['title']
+            video_published_at = video['published_at']
 
             # Check if video has already been processed
-            if video_id in processed_video_ids: # Level 3
-                logging.info(f"Video '{video_title}' (ID: {video_id}, Published: {video_published_at}) already processed. Skipping.") # Level 4
-                continue # Level 4
+            if video_id in processed_video_ids:
+                logging.info(f"Video '{video_title}' (ID: {video_id}, Published: {video_published_at}) already processed. Skipping.")
+                continue
 
-            logging.info(f"Found potential new video: '{video_title}' (ID: {video_id}, Published: {video_published_at.strftime('%Y-%m-%d %H:%M:%S %Z')}). Fetching details...") # Level 3
+            logging.info(f"Found potential new video: '{video_title}' (ID: {video_id}, Published: {video_published_at.strftime('%Y-%m-%d %H:%M:%S %Z')}). Fetching details...")
 
             # Get video duration
-            duration_iso = get_video_details(youtube, video_id) # Level 3
-            duration_seconds = 0 # Level 3
-            formatted_duration_str = None # Level 3
+            duration_iso = get_video_details(youtube, video_id)
+            duration_seconds = 0
+            formatted_duration_str = None
 
-            if duration_iso: # Level 3
-                duration_seconds = parse_iso8601_duration(duration_iso) # Level 4
-                formatted_duration_str = format_duration_seconds(duration_seconds) # Level 4
-                logging.debug(f"Video '{video_title}' duration: {formatted_duration_str} ({duration_seconds} seconds), ISO: {duration_iso}") # Level 4
-            else: # Level 3
-                logging.warning(f"Could not determine duration for video '{video_title}' (ID: {video_id}). Proceeding without duration check/info.") # Level 4
+            if duration_iso:
+                duration_seconds = parse_iso8601_duration(duration_iso)
+                formatted_duration_str = format_duration_seconds(duration_seconds)
+                logging.debug(f"Video '{video_title}' duration: {formatted_duration_str} ({duration_seconds} seconds), ISO: {duration_iso}")
+            else:
+                logging.warning(f"Could not determine duration for video '{video_title}' (ID: {video_id}). Proceeding without duration check/info.")
 
             # Apply Minimum Duration Filter
-            if MIN_DURATION_MINUTES > 0 and duration_seconds > 0: # Level 3
-                min_duration_seconds = MIN_DURATION_MINUTES * 60 # Level 4
-                if duration_seconds < min_duration_seconds: # Level 4
-                    logging.info(f"Video '{video_title}' ({formatted_duration_str}) is shorter than the minimum {MIN_DURATION_MINUTES} minutes. Skipping processing.") # Level 5
+            if MIN_DURATION_MINUTES > 0 and duration_seconds > 0:
+                min_duration_seconds = MIN_DURATION_MINUTES * 60
+                if duration_seconds < min_duration_seconds:
+                    logging.info(f"Video '{video_title}' ({formatted_duration_str}) is shorter than the minimum {MIN_DURATION_MINUTES} minutes. Skipping processing.")
                     # Mark as processed so it's not checked again
-                    processed_video_ids.add(video_id) # Level 5
-                    new_videos_processed_count += 1 # Level 5
-                    save_processed_videos() # Save immediately after adding # Level 5
-                    continue # Skip to next video # Level 5
+                    processed_video_ids.add(video_id)
+                    new_videos_processed_count += 1
+                    save_processed_videos() # Save immediately after adding
+                    continue
 
             # --- Video Processing ---
-            logging.info(f"Processing video '{video_title}' (ID: {video_id}). Duration: {formatted_duration_str if formatted_duration_str else 'N/A'}") # Level 3
+            logging.info(f"Processing video '{video_title}' (ID: {video_id}). Duration: {formatted_duration_str if formatted_duration_str else 'N/A'}")
 
             # Get transcript
-            transcript = get_transcript(video_id) # Level 3
-            if not transcript: # Level 3
-                logging.warning(f"Could not get transcript for '{video_title}' ({video_id}). Skipping summarization and notification for this video.") # Level 4
+            transcript = get_transcript(video_id)
+            if not transcript:
+                logging.warning(f"Could not get transcript for '{video_title}' ({video_id}). Skipping summarization and notification for this video.")
                 # Decide whether to mark as processed or retry later.
                 # Marking as processed prevents repeated attempts on videos with disabled transcripts.
-                processed_video_ids.add(video_id) # Level 4
-                new_videos_processed_count += 1 # Level 4
-                save_processed_videos() # Level 4
-                continue # Skip to next video # Level 4
+                processed_video_ids.add(video_id)
+                new_videos_processed_count += 1
+                save_processed_videos()
+                continue
 
-            time.sleep(1) # Small delay before hitting Gemini API # Level 3
+            time.sleep(1) # Small delay before hitting Gemini API
 
             # Generate summaries using Gemini
-            logging.info(f"Generating summaries for '{video_title}' using Gemini...") # Level 3
-            exec_summary = generate_summary_with_gemini(transcript, PROMPT_EXEC_SUMMARY) # Level 3
-            time.sleep(1) # Delay between Gemini calls # Level 3
-            detailed_summary = generate_summary_with_gemini(transcript, PROMPT_DETAILED_SUMMARY) # Level 3
-            time.sleep(1) # Delay between Gemini calls # Level 3
-            key_quotes = generate_summary_with_gemini(transcript, PROMPT_KEY_QUOTES) # Level 3
+            logging.info(f"Generating summaries for '{video_title}' using Gemini...")
+            exec_summary = generate_summary_with_gemini(transcript, PROMPT_EXEC_SUMMARY)
+            time.sleep(1) # Delay between Gemini calls
+            detailed_summary = generate_summary_with_gemini(transcript, PROMPT_DETAILED_SUMMARY)
+            time.sleep(1) # Delay between Gemini calls
+            key_quotes = generate_summary_with_gemini(transcript, PROMPT_KEY_QUOTES)
 
             # Check if summaries indicate an error or blocking
-            is_error_in_summary = False # Level 3
-            error_messages = [] # Level 3
-            for summary in [exec_summary, detailed_summary, key_quotes]: # Level 3
-                 if summary is None or summary.startswith("Error:") or "[Blocked" in summary or "[No Content" in summary: # Level 4
-                     is_error_in_summary = True # Level 5
-                     error_messages.append(summary if summary else "None/Empty Summary") # Level 5
-                     break # Stop checking if any summary failed # Level 5
+            is_error_in_summary = False
+            error_messages = []
+            for summary in [exec_summary, detailed_summary, key_quotes]:
+                 # Check if it's a string AND starts with Error/Blocked/No Content
+                 if isinstance(summary, str) and (summary.startswith("Error:") or "[Blocked" in summary or "[No Content" in summary):
+                     is_error_in_summary = True
+                     error_messages.append(summary)
+                     # No break here, collect all error messages if needed, or add break if you only care about the first error
+                     # break # Add break here if you want to stop checking after the first error is found
+                 # Also consider None as an error case
+                 elif summary is None:
+                      is_error_in_summary = True
+                      error_messages.append("None/Empty Summary")
+                      # No break here either
+                      # break # Add break here if you want to stop checking after None is found
 
-            logging.debug(f"Summary generation check for {video_id}. is_error_in_summary = {is_error_in_summary}") # Level 3
+
+            logging.debug(f"Summary generation check for {video_id}. is_error_in_summary = {is_error_in_summary}")
 
             # Save summaries locally regardless of email success/failure
-            logging.debug(f"Calling save_summary_local for video ID: {video_id}") # Level 3
-            saved_file_path = save_summary_local(video_id, video_title, formatted_duration_str, exec_summary, detailed_summary, key_quotes) # Level 3
+            logging.debug(f"Calling save_summary_local for video ID: {video_id}")
+            saved_file_path = save_summary_local(video_id, video_title, formatted_duration_str, exec_summary, detailed_summary, key_quotes)
 
-            if not saved_file_path: # Level 3
-                 logging.error(f"FAILED to save summary file locally for video {video_id}.") # Level 4
+            if not saved_file_path:
+                 logging.error(f"FAILED to save summary file locally for video {video_id}.")
                  # Decide if you want to mark as processed even if saving failed.
                  # For now, we will, assuming the main goal is not re-processing.
-                 processed_video_ids.add(video_id) # Level 4
-                 new_videos_processed_count += 1 # Level 4
-                 save_processed_videos() # Level 4
-                 continue # Skip email if local save failed # Level 4
+                 processed_video_ids.add(video_id)
+                 new_videos_processed_count += 1
+                 save_processed_videos()
+                 continue # Skip email if local save failed
 
             # If there was an error during Gemini processing
-            if is_error_in_summary: # Level 3
-                 logging.error(f"One or more summaries failed generation or were blocked for video {video_id}. Summaries saved locally, but skipping email notification. Errors: {', '.join(error_messages)}") # Level 4
+            if is_error_in_summary:
+                 logging.error(f"One or more summaries failed generation or were blocked for video {video_id}. Summaries saved locally,but skipping email notification. Errors: {', '.join(error_messages)}")
                  # Mark as processed since we saved the error locally and likely can't get a better summary without intervention
-                 processed_video_ids.add(video_id) # Level 4
-                 new_videos_processed_count += 1 # Level 4
-                 save_processed_videos() # Level 4
-                 continue # Skip email # Level 4
+                 processed_video_ids.add(video_id)
+                 new_videos_processed_count += 1
+                 save_processed_videos()
+                 continue # Skip email
 
             # Determine recipients
-            recipients_for_this_channel = channel_recipients.get(channel_id) # Level 3
-            final_recipient_list = [] # Level 3
+            recipients_for_this_channel = channel_recipients.get(channel_id)
+            final_recipient_list = []
 
-            if recipients_for_this_channel: # Level 3
-                final_recipient_list = recipients_for_this_channel # Level 4
-                logging.info(f"Using specific recipients for channel {channel_id}: {', '.join(final_recipient_list)}") # Level 4
-            elif default_recipients: # Level 3
-                final_recipient_list = default_recipients # Level 4
-                logging.info(f"Using default recipients for channel {channel_id}: {', '.join(final_recipient_list)}") # Level 4
-            else: # Level 3
-                logging.warning(f"No specific or default recipients found for channel {channel_id}. Cannot send email for video {video_id}.") # Level 4
-                final_recipient_list = [] # Ensure it's empty if no recipients found # Level 4
+            if recipients_for_this_channel:
+                final_recipient_list = recipients_for_this_channel
+                logging.info(f"Using specific recipients for channel {channel_id}: {', '.join(final_recipient_list)}")
+            elif default_recipients:
+                final_recipient_list = default_recipients
+                logging.info(f"Using default recipients for channel {channel_id}: {', '.join(final_recipient_list)}")
+            else:
+                logging.warning(f"No specific or default recipients found for channel {channel_id}. Cannot send email for video {video_id}.")
+                final_recipient_list = [] # Ensure it's empty if no recipients found
 
             # Send email notification
-            if final_recipient_list: # Level 3
-                logging.info(f"Attempting to send email for video ID: {video_id} to {', '.join(final_recipient_list)}") # Level 4
-                send_email_notification( # Level 4
-                    channel_name, video_title, video_id, formatted_duration_str, # Level 5
-                    exec_summary, detailed_summary, key_quotes, final_recipient_list # Level 5
-                ) # Level 4
-            else: # Level 3
-                logging.warning(f"Skipping email for {video_id} due to no recipients found.") # Level 4
+            if final_recipient_list:
+                logging.info(f"Attempting to send email for video ID: {video_id} to {', '.join(final_recipient_list)}")
+                send_email_notification(
+                    channel_name, video_title, video_id, formatted_duration_str,
+                    exec_summary, detailed_summary, key_quotes, final_recipient_list
+                )
+            else:
+                logging.warning(f"Skipping email for {video_id} due to no recipients found.")
 
             # Mark video as processed after successful (or attempted) processing and notification
-            logging.debug(f"Adding video {video_id} to processed set.") # Level 3
-            processed_video_ids.add(video_id) # Level 3
-            new_videos_processed_count += 1 # Level 3
+            logging.debug(f"Adding video {video_id} to processed set.")
+            processed_video_ids.add(video_id)
+            new_videos_processed_count += 1
 
-            # Save processed videos list frequently (e.g., after each video)
-            save_processed_videos() # Level 3
+            # This save happens for *each* processed video
+            save_processed_videos()
 
             # Add a small delay between processing videos within a channel
-            time.sleep(2) # Level 3
+            time.sleep(2)
 
-        # End 'for video' loop # Level 2 indentation resumes here
+        # End 'for video' loop
 
         # Add a delay between checking different channels
-        time.sleep(3) # Level 2
+        time.sleep(3)
 
-    # End 'for channel_id' loop # Level 1 indentation resumes here
+    # End 'for channel_id' loop
 
-    # Final save of processed videos list
-    save_processed_videos() # Level 1
+    # Final save of processed videos list (redundant if saved per video, but harmless)
+    save_processed_videos()
 
-    end_time = time.time() # Level 1
-    duration = end_time - start_time # Level 1
+    end_time = time.time()
+    duration = end_time - start_time
 
-    logging.info(f"--- YouTube Monitor Script Finished ---") # Level 1
-    logging.info(f"Processed {new_videos_processed_count} new videos in this run (including those skipped due to duration, transcript errors, or Gemini failures).") # Level 1
-    logging.info(f"Total execution time: {duration:.2f} seconds.") # Level 1
+    logging.info(f"--- YouTube Monitor Script Finished ---")
+    logging.info(f"Processed {new_videos_processed_count} new videos in this run (including those skipped due to duration, transcript errors, or Gemini failures).")
+    logging.info(f"Total execution time: {duration:.2f} seconds.")
 
 # Script entry point
-if __name__ == "__main__": # Level 0
-    main() # Level 1
+if __name__ == "__main__":
+    main()
