@@ -260,38 +260,29 @@ def get_latest_videos(youtube, channel_id, max_results):
 
 def get_transcript(video_id):
     """
-    Fetches the transcript for a video, with retries for parsing errors.
+    Fetches the transcript for a video using the simplified, high-level API call
+    which is more robust to library updates.
     """
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        transcript_to_fetch = transcript_list.find_transcript(["en", "en-US", "en-GB"])
+        # Use the direct get_transcript method. It's simpler and more reliable.
+        # It automatically finds an English transcript from the list provided.
+        transcript_list = YouTubeTranscriptApi.get_transcript(
+            video_id, languages=["en", "en-US", "en-GB"]
+        )
 
-        max_retries = 3
-        retry_delay_seconds = 30
-        for attempt in range(max_retries):
-            try:
-                transcript_text = " ".join(
-                    [item["text"] for item in transcript_to_fetch.fetch()]
-                )
-                logging.info(f"Successfully fetched transcript for video ID: {video_id}")
-                return transcript_text
-            except ElementTree.ParseError:
-                logging.warning(
-                    f"Attempt {attempt + 1}/{max_retries} to parse transcript for {video_id} failed (likely not ready yet)."
-                )
-                if attempt < max_retries - 1:
-                    logging.info(f"Retrying in {retry_delay_seconds} seconds...")
-                    time.sleep(retry_delay_seconds)
-                else:
-                    logging.error(
-                        f"All {max_retries} attempts failed for video {video_id}."
-                    )
-                    return None
+        # The returned transcript_list is a list of dictionaries.
+        # This line correctly extracts the 'text' from each dictionary.
+        transcript_text = " ".join([item["text"] for item in transcript_list])
+        
+        logging.info(f"Successfully fetched transcript for video ID: {video_id}")
+        return transcript_text
+
     except (TranscriptsDisabled, NoTranscriptFound):
-        logging.warning(f"No English transcript found or disabled for {video_id}.")
+        logging.warning(f"No English transcript found or transcripts are disabled for {video_id}.")
         return None
     except Exception as e:
-        logging.error(f"Error fetching transcript for {video_id}: {e}")
+        # This will catch any other unexpected errors.
+        logging.error(f"An unexpected error occurred while fetching transcript for {video_id}: {e}")
         return None
 
 
