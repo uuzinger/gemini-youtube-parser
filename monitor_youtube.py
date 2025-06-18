@@ -324,6 +324,7 @@ def save_summary_local(video_id, title, duration, exec_summary, detailed, quotes
             f"--- Detailed Summary ---\n{detailed}\n\n"
             f"--- Key Quotes ---\n{quotes}\n"
         )
+        # FIX: Added encoding="utf-8" to handle any Unicode characters from the summary.
         with open(filename, "w", encoding="utf-8") as f:
             f.write(content)
         logging.info(f"Saved summary to {filename}")
