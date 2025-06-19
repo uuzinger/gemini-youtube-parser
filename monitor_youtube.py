@@ -332,12 +332,28 @@ def save_summary_local(video_id, title, duration, exec_summary, detailed, quotes
         logging.error(f"Failed to save summary for {video_id}: {e}")
 
 
+
 def send_email_notification(
     channel_name, video, duration, exec_summary, detailed, quotes
 ):
-    recipients = channel_recipients.get(video["channel_id"], default_recipients)
-    if not recipients:
-        logging.warning(f"No recipients for channel {video['channel_id']}. Skipping email.")
+    # MODIFIED: Always send to default recipients, and BCC channel-specific ones.
+    if not default_recipients:
+        logging.warning(
+            "No 'default_recipients' configured in config.ini. Skipping email."
+        )
+        return
+
+    # Get channel-specific recipients for the BCC list. Fallback to an empty list.
+    bcc_recipients = channel_recipients.get(video["channel_id"], [])
+
+    # Combine lists for the SMTP sending command.
+    # Use a set to remove duplicates in case a BCC recipient is also a default.
+    all_email_addresses = list(set(default_recipients + bcc_recipients))
+
+    if not all_email_addresses:
+        logging.warning(
+            f"No recipients found for channel {video['channel_id']} and no defaults. Skipping email."
+        )
         return
 
     subject = f"New YouTube Summary: [{channel_name}] {video['title']}"
@@ -360,18 +376,29 @@ def send_email_notification(
     """
     msg = MIMEMultipart("alternative")
     msg["From"] = SENDER_EMAIL
-    msg["To"] = ", ".join(recipients)
+    # The 'To' header should only contain the primary, visible recipients.
+    msg["To"] = ", ".join(default_recipients)
     msg["Subject"] = subject
+    # NOTE: The 'Bcc' header is NOT added to the message itself.
+    # The SMTP server handles delivery to BCC addresses without them appearing in headers.
     msg.attach(MIMEText(body_html, "html", "utf-8"))
 
     try:
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=60) as server:
             server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SENDER_EMAIL, recipients, msg.as_string())
-        logging.info(f"Successfully sent email for {video['id']}")
+            # The sendmail command receives the full list of all recipients (To + Bcc).
+            server.sendmail(SENDER_EMAIL, all_email_addresses, msg.as_string())
+        log_message = (
+            f"Successfully sent email for {video['id']} to "
+            f"{default_recipients}"
+        )
+        if bcc_recipients:
+            log_message += f" (BCC: {bcc_recipients})"
+        logging.info(log_message)
     except Exception as e:
         logging.error(f"Failed to send email for {video['id']}: {e}")
+
 
 
 def get_channel_name(youtube, channel_id):
