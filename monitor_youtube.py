@@ -47,12 +47,17 @@ try:
     config.read(CONFIG_FILE)
     YOUTUBE_API_KEY = config.get("API_KEYS", "youtube_api_key", fallback=None)
     GEMINI_API_KEY = config.get("API_KEYS", "gemini_api_key", fallback=None)
-    channel_ids_raw = config.get("CHANNELS", "channel_ids", fallback=None)
-    CHANNEL_IDS = (
-        [cid.strip() for cid in channel_ids_raw.split(",") if cid.strip()]
-        if channel_ids_raw
-        else []
-    )
+
+    # MODIFIED: Read channel IDs from the values of the [CHANNELS] section.
+    # The key (your comment) is ignored here, we just need the IDs.
+    CHANNEL_IDS = []
+    if config.has_section("CHANNELS"):
+        CHANNEL_IDS = [
+            channel_id.strip()
+            for name, channel_id in config.items("CHANNELS")
+            if channel_id.strip().startswith("UC")
+        ]
+
     GEMINI_MODEL = config.get("GEMINI", "model_name", fallback="gemini-1.5-pro-latest")
     PROMPT_EXEC_SUMMARY = config.get(
         "GEMINI", "prompt_executive_summary", fallback="Executive summary prompt missing."
@@ -134,7 +139,7 @@ try:
     if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY":
         errors.append("gemini_api_key")
     if not CHANNEL_IDS:
-        errors.append("channel_ids")
+        errors.append("channels in the config file")
     if not SMTP_SERVER or not SMTP_USER or not SMTP_PASSWORD or not SENDER_EMAIL:
         errors.append("Email settings")
     if not default_recipients and not channel_recipients:
@@ -153,17 +158,15 @@ log_dir = os.path.dirname(LOG_FILE)
 if log_dir and not os.path.exists(log_dir):
     os.makedirs(log_dir, exist_ok=True)
 
-# CRITICAL FIX for UnicodeEncodeError on some systems
-# Use 'errors="replace"' to prevent crashes when logging characters the console can't display
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler(LOG_FILE, encoding="utf-8"),
-        logging.StreamHandler(sys.stdout), # StreamHandler to console
+        logging.StreamHandler(sys.stdout),
     ],
     encoding="utf-8",
-    errors="replace", # Tell logger to replace problematic characters
+    errors="replace",
 )
 
 processed_video_ids = set()
@@ -259,29 +262,17 @@ def get_latest_videos(youtube, channel_id, max_results):
 
 
 def get_transcript(video_id):
-    """
-    Fetches the transcript for a video using the simplified, high-level API call
-    which is more robust to library updates.
-    """
     try:
-        # Use the direct get_transcript method. It's simpler and more reliable.
-        # It automatically finds an English transcript from the list provided.
         transcript_list = YouTubeTranscriptApi.get_transcript(
             video_id, languages=["en", "en-US", "en-GB"]
         )
-
-        # The returned transcript_list is a list of dictionaries.
-        # This line correctly extracts the 'text' from each dictionary.
         transcript_text = " ".join([item["text"] for item in transcript_list])
-        
         logging.info(f"Successfully fetched transcript for video ID: {video_id}")
         return transcript_text
-
     except (TranscriptsDisabled, NoTranscriptFound):
         logging.warning(f"No English transcript found or transcripts are disabled for {video_id}.")
         return None
     except Exception as e:
-        # This will catch any other unexpected errors.
         logging.error(f"An unexpected error occurred while fetching transcript for {video_id}: {e}")
         return None
 
@@ -293,7 +284,6 @@ def generate_summary_with_gemini(transcript, prompt):
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel(GEMINI_MODEL)
         full_prompt = prompt.format(transcript=transcript)
-
         for attempt in range(3):
             try:
                 response = model.generate_content(
@@ -324,7 +314,6 @@ def save_summary_local(video_id, title, duration, exec_summary, detailed, quotes
             f"--- Detailed Summary ---\n{detailed}\n\n"
             f"--- Key Quotes ---\n{quotes}\n"
         )
-        # FIX: Added encoding="utf-8" to handle any Unicode characters from the summary.
         with open(filename, "w", encoding="utf-8") as f:
             f.write(content)
         logging.info(f"Saved summary to {filename}")
@@ -332,24 +321,16 @@ def save_summary_local(video_id, title, duration, exec_summary, detailed, quotes
         logging.error(f"Failed to save summary for {video_id}: {e}")
 
 
-
 def send_email_notification(
     channel_name, video, duration, exec_summary, detailed, quotes
 ):
-    # MODIFIED: Always send to default recipients, and BCC channel-specific ones.
     if not default_recipients:
         logging.warning(
             "No 'default_recipients' configured in config.ini. Skipping email."
         )
         return
-
-    # Get channel-specific recipients for the BCC list. Fallback to an empty list.
     bcc_recipients = channel_recipients.get(video["channel_id"], [])
-
-    # Combine lists for the SMTP sending command.
-    # Use a set to remove duplicates in case a BCC recipient is also a default.
     all_email_addresses = list(set(default_recipients + bcc_recipients))
-
     if not all_email_addresses:
         logging.warning(
             f"No recipients found for channel {video['channel_id']} and no defaults. Skipping email."
@@ -363,7 +344,7 @@ def send_email_notification(
 
     body_html = f"""
     <html><body>
-        <p>A new video has been posted on the '{channel_name}' channel:</p>
+        <p>A new video has been posted on the '{html.escape(channel_name)}' channel:</p>
         <p>
             <b>Title:</b> {html.escape(video['title'])}<br>
             <b>Duration:</b> {duration}<br>
@@ -376,18 +357,14 @@ def send_email_notification(
     """
     msg = MIMEMultipart("alternative")
     msg["From"] = SENDER_EMAIL
-    # The 'To' header should only contain the primary, visible recipients.
     msg["To"] = ", ".join(default_recipients)
     msg["Subject"] = subject
-    # NOTE: The 'Bcc' header is NOT added to the message itself.
-    # The SMTP server handles delivery to BCC addresses without them appearing in headers.
     msg.attach(MIMEText(body_html, "html", "utf-8"))
 
     try:
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=60) as server:
             server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)
-            # The sendmail command receives the full list of all recipients (To + Bcc).
             server.sendmail(SENDER_EMAIL, all_email_addresses, msg.as_string())
         log_message = (
             f"Successfully sent email for {video['id']} to "
@@ -400,14 +377,14 @@ def send_email_notification(
         logging.error(f"Failed to send email for {video['id']}: {e}")
 
 
-
+# RESTORED: This function is brought back to fetch the official channel name via the API.
 def get_channel_name(youtube, channel_id):
     try:
         response = youtube.channels().list(part="snippet", id=channel_id).execute()
         return response["items"][0]["snippet"]["title"]
     except (HttpError, IndexError, KeyError) as e:
         logging.error(f"Error fetching channel name for {channel_id}: {e}")
-        return channel_id
+        return channel_id # Fallback to the ID if the name can't be fetched
 
 
 def main():
@@ -422,8 +399,11 @@ def main():
         logging.fatal(f"Failed to build YouTube API client: {e}")
         sys.exit(1)
 
+    # MODIFIED: First, fetch all official channel names using the IDs from the config.
+    # This creates a dictionary of {channel_id: official_channel_name}.
     all_channel_names = {cid: get_channel_name(youtube, cid) for cid in CHANNEL_IDS}
 
+    # MODIFIED: Now, loop through the dictionary of official names.
     for channel_id, channel_name in all_channel_names.items():
         logging.info(f"--- Checking Channel: {channel_name} ({channel_id}) ---")
         latest_videos = get_latest_videos(youtube, channel_id, MAX_RESULTS_PER_CHANNEL + 5)
@@ -434,7 +414,7 @@ def main():
                 continue
 
             logging.info(f"Processing new video: '{video['title']}' (ID: {video_id})")
-            processed_video_ids.add(video_id) # Mark as processed immediately
+            processed_video_ids.add(video_id)
             processed_count += 1
             
             duration_iso = get_video_details(youtube, video_id)
