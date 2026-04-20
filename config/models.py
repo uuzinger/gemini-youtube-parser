@@ -47,3 +47,4 @@ class Config:
     youtube_rpd: int = 10000
     gemini_rpm: int = 1000
     gemini_rpd: int = 1000000
+    dry_run: bool = False

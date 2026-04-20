@@ -133,6 +133,7 @@ def load_config(config_path: str = "config.ini") -> Config:
         youtube_rpd=parser.getint("RATE_LIMITS", "youtube_rpd", fallback=10000),
         gemini_rpm=parser.getint("RATE_LIMITS", "gemini_rpm", fallback=1000),
         gemini_rpd=parser.getint("RATE_LIMITS", "gemini_rpd", fallback=1000000),
+        dry_run=parser.getboolean("SETTINGS", "dry_run", fallback=False),
     )
 
     errors = validate_config(config)

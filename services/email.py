@@ -53,6 +53,29 @@ class EmailService:
             f"New YouTube Summary: [{channel_name}] {video.title}"
         )
 
+        # Dry run mode: print email instead of sending
+        if self.config.dry_run:
+            logger.info("=" * 80)
+            logger.info("DRY RUN - Email that would have been sent:")
+            logger.info("=" * 80)
+            logger.info("To: %s", ", ".join(self.config.default_recipients))
+            if bcc_recipients:
+                logger.info("BCC: %s", ", ".join(bcc_recipients))
+            logger.info("Subject: %s", subject)
+            logger.info("-" * 80)
+            logger.info("Executive Summary:")
+            logger.info(exec_summary)
+            logger.info("-" * 80)
+            logger.info("Detailed Summary:")
+            logger.info(detailed_summary)
+            logger.info("-" * 80)
+            logger.info("Key Quotes:")
+            logger.info(key_quotes)
+            logger.info("-" * 80)
+            logger.info("DRY RUN - Email NOT sent (dry run mode)")
+            logger.info("=" * 80)
+            return
+
         exec_html = markdown.markdown(exec_summary or "")
         detailed_html = markdown.markdown(detailed_summary or "")
         quotes_html = markdown.markdown(key_quotes or "")
