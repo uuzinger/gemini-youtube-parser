@@ -5,12 +5,12 @@ import platform
 
 # --- Configuration ---
 VENV_DIR = ".venv"
-MAIN_SCRIPT = "monitor_youtube.py"
+MAIN_SCRIPT = "main.py"
 # --- End Configuration ---
 
 def get_venv_python_executable():
     """Gets the path to the python executable inside the venv."""
-    base_dir = os.path.dirname(os.path.abspath(__file__)) # Directory where run.py is
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     venv_path = os.path.join(base_dir, VENV_DIR)
 
     if not os.path.isdir(venv_path):
@@ -20,12 +20,10 @@ def get_venv_python_executable():
 
     if platform.system() == "Windows":
         python_exe = os.path.join(venv_path, "Scripts", "python.exe")
-    else: # Linux, macOS
+    else:
         python_exe = os.path.join(venv_path, "bin", "python")
         if not os.path.exists(python_exe):
-             # Handle systems where venv python is python3
-             python_exe = os.path.join(venv_path, "bin", "python3")
-
+            python_exe = os.path.join(venv_path, "bin", "python3")
 
     if not os.path.exists(python_exe):
         print(f"ERROR: Python executable not found in virtual environment: {python_exe}")
@@ -35,57 +33,73 @@ def get_venv_python_executable():
     return python_exe
 
 def check_main_script():
-     base_dir = os.path.dirname(os.path.abspath(__file__))
-     script_path = os.path.join(base_dir, MAIN_SCRIPT)
-     if not os.path.exists(script_path):
-          print(f"ERROR: Main script '{MAIN_SCRIPT}' not found in {base_dir}.")
-          sys.exit(1)
-     return script_path
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    script_path = os.path.join(base_dir, MAIN_SCRIPT)
+    if not os.path.exists(script_path):
+        print(f"ERROR: Main script '{MAIN_SCRIPT}' not found in {base_dir}.")
+        sys.exit(1)
+    return script_path
 
 
 if __name__ == "__main__":
-    print(f"--- Wrapper: Activating venv and running {MAIN_SCRIPT} ---")
+    # Check for model suggestion file
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    suggestion_file = os.path.join(base_dir, ".model_suggestion")
+    if os.path.exists(suggestion_file):
+        print("\n" + "=" * 60)
+        print("MODEL SUGGESTION")
+        print("=" * 60)
+        try:
+            import json
+            with open(suggestion_file, "r", encoding="utf-8") as f:
+                suggestion = json.load(f)
+            print(f"Your configured model '{suggestion.get('old_model', 'unknown')}' is no longer available.")
+            print(f"Suggested model: '{suggestion.get('suggested_model', 'unknown')}'")
+            print(suggestion.get("message", ""))
+        except Exception as e:
+            print(f"Could not read suggestion file: {e}")
+        print("=" * 60 + "\n")
+
+    print(f"--- Wrapper: Running {MAIN_SCRIPT} ---")
     venv_python = get_venv_python_executable()
     main_script_path = check_main_script()
-    script_dir = os.path.dirname(main_script_path) # Get dir of monitor_youtube.py
+    script_dir = os.path.dirname(main_script_path)
 
     print(f"Using Python from venv: {venv_python}")
     print(f"Executing script: {main_script_path}")
-    print(f"Working directory: {script_dir}") # Log the cwd being used
+    print(f"Working directory: {script_dir}")
 
     try:
-        # Run the main script using the python from the virtual environment
-        # Set the cwd so monitor_youtube.py finds config.ini etc., relative to itself.
         process = subprocess.run(
             [venv_python, main_script_path],
             check=True,
-            cwd=script_dir, # Set working directory to where monitor_youtube.py is
+            cwd=script_dir,
             encoding='utf-8',
             stderr=subprocess.PIPE,
             stdout=subprocess.PIPE
         )
 
         if process.stdout:
-             print("\n--- Script Output ---")
-             print(process.stdout)
+            print("\n--- Script Output ---")
+            print(process.stdout)
         if process.stderr:
-             print("\n--- Script Error Output ---", file=sys.stderr)
-             print(process.stderr, file=sys.stderr)
+            print("\n--- Script Error Output ---", file=sys.stderr)
+            print(process.stderr, file=sys.stderr)
 
         print(f"--- Wrapper: {MAIN_SCRIPT} finished successfully ---")
         sys.exit(0)
 
     except FileNotFoundError:
-         print(f"ERROR: Could not execute Python from venv '{venv_python}'. Check venv integrity.")
-         sys.exit(1)
+        print(f"ERROR: Could not execute Python from venv '{venv_python}'. Check venv integrity.")
+        sys.exit(1)
     except subprocess.CalledProcessError as e:
         print(f"ERROR: The main script '{MAIN_SCRIPT}' exited with an error (code {e.returncode}).")
         if e.stdout:
-             print("\n--- Script Output ---")
-             print(e.stdout)
+            print("\n--- Script Output ---")
+            print(e.stdout)
         if e.stderr:
-             print("\n--- Script Error Output ---", file=sys.stderr)
-             print(e.stderr, file=sys.stderr)
+            print("\n--- Script Error Output ---", file=sys.stderr)
+            print(e.stderr, file=sys.stderr)
         sys.exit(e.returncode)
     except KeyboardInterrupt:
         print("\nExecution interrupted by user.")

@@ -9,9 +9,8 @@ print("--- YouTube Monitor Setup Script ---")
 # --- Configuration ---
 VENV_DIR = ".venv"
 REQUIREMENTS_FILE = "requirements.txt"
-OUTPUT_DIR_NAME = "output" # Defined in config.ini, but needed here too
 CONFIG_FILE_NAME = "config.ini"
-MAIN_SCRIPT_NAME = "monitor_youtube.py"
+MAIN_SCRIPT_NAME = "main.py"
 RUN_SCRIPT_NAME = "run.py"
 # --- End Configuration ---
 
@@ -91,19 +90,6 @@ def install_requirements(venv_python_executable):
         print(f"ERROR: An unexpected error occurred during dependency installation: {e}")
         sys.exit(1)
 
-def create_output_directory():
-    """Creates the output directory if it doesn't exist."""
-    if not os.path.exists(OUTPUT_DIR_NAME):
-        print(f"Creating output directory '{OUTPUT_DIR_NAME}'...")
-        try:
-            os.makedirs(OUTPUT_DIR_NAME)
-            print("Output directory created.")
-        except OSError as e:
-            print(f"ERROR: Could not create output directory '{OUTPUT_DIR_NAME}': {e}")
-            sys.exit(1)
-    else:
-        print(f"Output directory '{OUTPUT_DIR_NAME}' already exists.")
-
 def check_required_files():
     """Checks if essential files exist."""
     print("Checking for required files...")
@@ -127,7 +113,6 @@ if __name__ == "__main__":
     create_virtual_env()
     venv_python_exe = get_venv_executable("python")
     install_requirements(venv_python_exe)
-    create_output_directory()
 
     print("\n--- Setup Complete! ---")
     if not os.path.exists(CONFIG_FILE_NAME) or os.path.getsize(CONFIG_FILE_NAME) < 100: # Basic check if config might be default

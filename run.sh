@@ -36,8 +36,8 @@ cd "$SCRIPT_DIR" || exit 1
 export PYTHONIOENCODING=utf-8
 
 # Run the Python script
-echo "$(date): Running monitor_youtube.py..." >> "$WRAPPER_LOG"
-python monitor_youtube.py >> "$WRAPPER_LOG" 2>&1 # Redirect stdout and stderr to the log
+echo "$(date): Running main.py..." >> "$WRAPPER_LOG"
+python main.py >> "$WRAPPER_LOG" 2>&1 # Redirect stdout and stderr to the log
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -eq 0 ]; then
