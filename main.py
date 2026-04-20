@@ -37,11 +37,13 @@ async def process_video(
     gemini_limiter: RateLimiter,
     channel_name: str,
     video,
+    is_retry: bool = False,
 ) -> None:
     """Process a single video: fetch details, transcript, generate summaries, send email."""
     video_id = video.id
+    prefix = "Retrying" if is_retry else "Processing"
     logger.info(
-        "Processing new video: '%s' (ID: %s)", video.title, video_id
+        "%s video: '%s' (ID: %s)", prefix, video.title, video_id
     )
 
     # Rate limit YouTube API
@@ -57,6 +59,7 @@ async def process_video(
         logger.info("Skipping short video: %s (%ds)", video_id, duration_s)
         storage_service.mark_processed(video_id)
         await storage_service.save_processed_videos()
+        await storage_service.save_failed_videos()
         return
 
     # Rate limit Gemini API
@@ -65,11 +68,9 @@ async def process_video(
     # Fetch transcript
     transcript = get_transcript(video_id)
     if not transcript:
-        logger.warning(
-            "No transcript for %s, cannot process further.", video_id
-        )
-        storage_service.mark_processed(video_id)
-        await storage_service.save_processed_videos()
+        error_msg = "No transcript available"
+        storage_service.mark_failed(video_id, error_msg)
+        await storage_service.save_failed_videos()
         return
 
     # Generate all three summaries in parallel
@@ -88,14 +89,21 @@ async def process_video(
             )
         )
     except ModelNotFoundError as e:
-        logger.error(
-            "Model not found during processing: %s. "
-            "Check .model_suggestion file for recommendations.",
-            e,
-        )
-        storage_service.mark_processed(video_id)
-        await storage_service.save_processed_videos()
-        raise
+        error_msg = f"Model not found: {e}"
+        storage_service.mark_failed(video_id, error_msg)
+        await storage_service.save_failed_videos()
+        return
+
+    # Check for errors in summaries
+    is_error = any(
+        s.startswith("Error:") for s in [exec_summary, detailed_summary, key_quotes] if s
+    )
+
+    if is_error:
+        error_msg = "Gemini generation failed"
+        storage_service.mark_failed(video_id, error_msg)
+        await storage_service.save_failed_videos()
+        return
 
     duration_str = format_duration_seconds(duration_s)
 
@@ -109,13 +117,8 @@ async def process_video(
         key_quotes,
     )
 
-    # Check for errors in summaries
-    is_error = any(
-        s.startswith("Error:") for s in [exec_summary, detailed_summary, key_quotes] if s
-    )
-
-    # Send email notification if no errors
-    if not is_error:
+    # Send email notification
+    try:
         await email_service.send_notification(
             channel_name,
             video,
@@ -124,9 +127,16 @@ async def process_video(
             detailed_summary,
             key_quotes,
         )
+    except Exception as e:
+        error_msg = f"Email send failed: {e}"
+        storage_service.mark_failed(video_id, error_msg)
+        await storage_service.save_failed_videos()
+        return
 
+    # All steps succeeded - mark as processed
     storage_service.mark_processed(video_id)
     await storage_service.save_processed_videos()
+    await storage_service.save_failed_videos()
 
     # Small delay between videos to be respectful of APIs
     await asyncio.sleep(5)
@@ -136,6 +146,7 @@ async def main() -> None:
     """Main async entry point."""
     start_time = time.time()
     processed_count = 0
+    retry_count = 0
 
     # Load configuration
     try:
@@ -191,8 +202,9 @@ async def main() -> None:
         rpm=config.gemini_rpm, rpd=config.gemini_rpd
     )
 
-    # Load processed videos
+    # Load processed videos and failed videos
     await storage_service.load_processed_videos()
+    await storage_service.load_failed_videos()
 
     # Validate Gemini model early
     try:
@@ -210,7 +222,45 @@ async def main() -> None:
             e,
         )
 
-    # Process each channel
+    # Phase 1: Retry failed videos first
+    failed_videos = storage_service.get_failed_videos()
+    if failed_videos:
+        logger.info(
+            "--- Retrying %d failed videos ---", len(failed_videos)
+        )
+        for video_id in failed_videos:
+            logger.info("Retrying failed video: %s", video_id)
+            # We need to get video details to reconstruct the video object
+            duration_iso = get_video_details(youtube, video_id)
+            if not duration_iso:
+                storage_service.mark_processed(video_id)
+                await storage_service.save_processed_videos()
+                await storage_service.save_failed_videos()
+                continue
+
+            duration_s = parse_iso8601_duration(duration_iso)
+            # Create a minimal video object for retry
+            retry_video = type('Video', (), {
+                'id': video_id,
+                'title': f"Retry - {video_id}",
+                'channel_id': '',
+            })()
+
+            await process_video(
+                config,
+                youtube,
+                gemini_service,
+                email_service,
+                storage_service,
+                youtube_limiter,
+                gemini_limiter,
+                "Unknown Channel",
+                retry_video,
+                is_retry=True,
+            )
+            retry_count += 1
+
+    # Phase 2: Process new videos
     all_channel_names = {
         cid: get_channel_name(youtube, cid) for cid in config.channel_ids
     }
@@ -230,6 +280,8 @@ async def main() -> None:
         for video in latest_videos:
             if storage_service.is_processed(video.id):
                 continue
+            if storage_service.is_failed(video.id):
+                continue
 
             await process_video(
                 config,
@@ -241,13 +293,15 @@ async def main() -> None:
                 gemini_limiter,
                 channel_name,
                 video,
+                is_retry=False,
             )
             processed_count += 1
 
     elapsed = time.time() - start_time
     logger.info(
-        "--- Script Finished. Processed %d new videos in %.2f seconds. ---",
+        "--- Script Finished. Processed %d new videos, retried %d failed videos in %.2f seconds. ---",
         processed_count,
+        retry_count,
         elapsed,
     )
 
