@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import re
+import time
 
 from google import genai
 from google.genai import types
@@ -9,12 +11,45 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
     retry_if_exception_type,
+    WaitABC,
+    wait_fixed,
 )
 
 from config.models import Config
 from .exceptions import ModelNotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+class _DynamicWait(WaitABC):
+    """Wait strategy that respects Gemini's retryDelay from error responses."""
+
+    def __init__(self, fallback_wait: WaitABC):
+        self.fallback_wait = fallback_wait
+
+    def __call__(self, retry_state):
+        error = retry_state.outcome.exception() if retry_state.outcome else None
+        if isinstance(error, genai.errors.APIError):
+            delay = _parse_retry_delay(error)
+            if delay:
+                logger.debug(
+                    "Gemini requested wait of %.1fs (retry %d/%d)",
+                    delay,
+                    retry_state.attempt_number,
+                    retry_state.statistics.attempt_number + 2,
+                )
+                return wait_fixed(delay)
+        return self.fallback_wait(retry_state)
+
+
+def _parse_retry_delay(error: genai.errors.APIError) -> float | None:
+    """Extract retry delay from Gemini error response."""
+    if not hasattr(error, 'message') or not error.message:
+        return None
+    match = re.search(r'retry in ([\d.]+)s', error.message)
+    if match:
+        return float(match.group(1)) + 1
+    return None
 
 
 class GeminiService:
@@ -76,7 +111,7 @@ class GeminiService:
 
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=30),
+        wait=_DynamicWait(wait_exponential(multiplier=1, min=5, max=60)),
         retry=retry_if_exception_type((genai.errors.APIError,)),
         reraise=True,
     )
