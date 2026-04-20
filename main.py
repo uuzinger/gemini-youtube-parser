@@ -230,8 +230,36 @@ async def main() -> None:
         )
         for video_id in failed_videos:
             logger.info("Retrying failed video: %s", video_id)
-            # We need to get video details to reconstruct the video object
-            duration_iso = get_video_details(youtube, video_id)
+            # Fetch actual video details
+            try:
+                video_response = (
+                    youtube.videos()
+                    .list(part="snippet,contentDetails", id=video_id)
+                    .execute()
+                )
+                if not video_response.get("items"):
+                    storage_service.mark_processed(video_id)
+                    await storage_service.save_processed_videos()
+                    await storage_service.save_failed_videos()
+                    continue
+
+                snippet = video_response["items"][0]["snippet"]
+                content_details = video_response["items"][0]["contentDetails"]
+                title = snippet["title"]
+                channel_id = snippet.get("channelId", "")
+                channel_name = snippet.get("channelTitle", "Unknown Channel")
+                duration_iso = content_details.get("duration", "")
+            except Exception as e:
+                logger.error(
+                    "Failed to fetch video details for retry %s: %s",
+                    video_id,
+                    e,
+                )
+                storage_service.mark_processed(video_id)
+                await storage_service.save_processed_videos()
+                await storage_service.save_failed_videos()
+                continue
+
             if not duration_iso:
                 storage_service.mark_processed(video_id)
                 await storage_service.save_processed_videos()
@@ -239,11 +267,10 @@ async def main() -> None:
                 continue
 
             duration_s = parse_iso8601_duration(duration_iso)
-            # Create a minimal video object for retry
             retry_video = type('Video', (), {
                 'id': video_id,
-                'title': f"Retry - {video_id}",
-                'channel_id': '',
+                'title': title,
+                'channel_id': channel_id,
             })()
 
             await process_video(
@@ -254,7 +281,7 @@ async def main() -> None:
                 storage_service,
                 youtube_limiter,
                 gemini_limiter,
-                "Unknown Channel",
+                channel_name,
                 retry_video,
                 is_retry=True,
             )
