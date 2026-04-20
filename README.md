@@ -28,6 +28,7 @@ The application performs the following actions:
 *   Model availability validation with automatic suggestions when models are deprecated.
 *   Structured logging with file rotation.
 *   Custom exception hierarchy for robust error handling.
+*   Dry run mode for testing email notifications without sending.
 *   INI configuration file for all settings.
 *   Wrapper scripts for easy execution (`run.py` for Windows, `run.sh` for Linux/macOS).
 
@@ -141,6 +142,7 @@ Controls API request rates to avoid hitting quotas:
 | `max_results_per_channel` | 3 | Videos to check per channel per run |
 | `min_video_duration_minutes` | 5 | Skip videos shorter than this |
 | `log_level` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) |
+| `dry_run` | `False` | If True, logs email content instead of sending |
 
 ## Model Validation
 
@@ -169,6 +171,26 @@ Logs are written to both the console and a rotating file (`logs/monitor.log` by 
 *   **Rotation:** 10MB max per file, 5 backup files kept.
 *   **Format:** `YYYY-MM-DD HH:MM:SS | LEVEL    | module | message`
 *   **Encoding:** UTF-8 with replacement for invalid characters.
+
+## Dry Run Mode
+
+Enable dry run mode to test the entire pipeline without actually sending emails:
+
+1.  Set `dry_run = True` in `config.ini` under `[SETTINGS]`.
+2.  Run the script normally.
+
+In dry run mode, the application will:
+*   Process all videos normally (fetch transcripts, generate summaries).
+*   Save summaries locally as usual.
+*   **NOT send any emails.**
+*   Log the full email content to the console and log file, including:
+    *   To/From addresses and BCC recipients
+    *   Subject line
+    *   Executive Summary
+    *   Detailed Summary
+    *   Key Quotes
+
+This is useful for testing your configuration and verifying email content before enabling production sends. Set `dry_run = False` when ready for live notifications.
 
 ## Requirements
 
