@@ -109,28 +109,76 @@ def get_video_details(youtube, video_id: str) -> str | None:
 
 
 def get_transcript(video_id: str) -> str | None:
-    """Fetch transcript for a video using youtube-transcript-api."""
+    """Fetch transcript for a video with retry logic for transient errors."""
+    from xml.etree.ElementTree import ParseError
+    from tenacity import (
+        retry,
+        stop_after_attempt,
+        wait_exponential,
+        retry_if_exception_type,
+    )
     from youtube_transcript_api import (
         YouTubeTranscriptApi,
-        TranscriptsDisabled,
         NoTranscriptFound,
+        TranscriptsDisabled,
+        YouTubeRequestFailed,
+        IpBlocked,
     )
 
+    api = YouTubeTranscriptApi()
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((ParseError, YouTubeRequestFailed, IpBlocked)),
+        reraise=True,
+    )
+    def _fetch_with_retry():
+        fetched = api.fetch(video_id, languages=["en", "en-US", "en-GB"])
+        raw_data = fetched.to_raw_data()
+        return " ".join(item["text"] for item in raw_data)
+
     try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(
-            video_id, languages=["en", "en-US", "en-GB"]
-        )
-        transcript_text = " ".join(item["text"] for item in transcript_list)
+        transcript_text = _fetch_with_retry()
         logger.info("Successfully fetched transcript for video ID: %s", video_id)
         return transcript_text
-    except (TranscriptsDisabled, NoTranscriptFound):
+    except NoTranscriptFound:
         logger.warning(
             "No English transcript found or transcripts disabled for %s.",
             video_id,
         )
         return None
+    except TranscriptsDisabled:
+        logger.warning(
+            "Transcripts are disabled for %s.",
+            video_id,
+        )
+        return None
+    except ParseError as e:
+        logger.error(
+            "XML parse error fetching transcript for %s (empty/malformed response): %s",
+            video_id,
+            e,
+        )
+        return None
+    except YouTubeRequestFailed as e:
+        logger.error(
+            "YouTube request failed for transcript %s: %s",
+            video_id,
+            e,
+        )
+        return None
+    except IpBlocked as e:
+        logger.error(
+            "IP blocked by YouTube when fetching transcript for %s: %s",
+            video_id,
+            e,
+        )
+        return None
     except Exception as e:
         logger.error(
-            "Unexpected error fetching transcript for %s: %s", video_id, e
+            "Unexpected error fetching transcript for %s: %s",
+            video_id,
+            e,
         )
         return None

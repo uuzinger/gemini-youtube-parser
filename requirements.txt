@@ -1,5 +1,5 @@
 google-api-python-client==2.156.0
-youtube-transcript-api==0.6.2
+youtube-transcript-api==1.2.4
 google-genai==1.22.0
 aiosmtplib==4.0.1
 tenacity>=8.2.3,<9.0.0
