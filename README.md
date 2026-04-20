@@ -87,7 +87,11 @@ gemini-youtube-parser/
     ```
     This creates a virtual environment (`.venv`) and installs dependencies.
 
-3.  **Configure `config.ini`:** Open the file and fill in:
+3.  **Configure `config.ini`:** Copy the example config and fill in your settings:
+    ```bash
+    cp config.ini.example config.ini
+    ```
+    Then edit `config.ini` and fill in:
 
     *   **`[API_KEYS]`**: `youtube_api_key` and `gemini_api_key`.
     *   **`[CHANNELS]`**: One YouTube Channel ID per line (e.g., `My Channel = UCxxxxxxxxxxxxxx`).
