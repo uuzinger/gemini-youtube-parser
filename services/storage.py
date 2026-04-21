@@ -170,7 +170,7 @@ class StorageService:
             )
 
             content_bytes = content.encode("utf-8", errors="replace")
-           async with aiofiles.open(
+            async with aiofiles.open(
                 filename, "wb"
             ) as f:
                 await f.write(content_bytes)
