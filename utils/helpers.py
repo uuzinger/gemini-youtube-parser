@@ -7,6 +7,7 @@ def sanitize_filename(filename: str, max_length: int = 150) -> str:
     filename = filename.replace("\ufffd", "_")
     sanitized = re.sub(r'[\\/*?:"<>|]', "", filename)
     sanitized = re.sub(r"\s+", "_", sanitized)
+    sanitized = "".join(c for c in sanitized if ord(c) < 128)
     return sanitized[:max_length].strip("_")
 
 
