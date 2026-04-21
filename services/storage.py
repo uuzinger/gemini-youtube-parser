@@ -5,6 +5,8 @@ import json
 import logging
 import os
 
+import aiofiles
+
 from config.models import Config
 
 logger = logging.getLogger(__name__)
