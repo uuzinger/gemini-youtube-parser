@@ -169,11 +169,13 @@ class StorageService:
                 f"{key_quotes}\n"
             )
 
-            content_bytes = content.encode("utf-8", errors="replace")
+            # Replace non-ASCII characters to avoid encoding errors
+            content = "".join(c for c in content if ord(c) < 128)
+
             async with aiofiles.open(
-                filename, "wb"
+                filename, "w", encoding="ascii"
             ) as f:
-                await f.write(content_bytes)
+                await f.write(content)
             logger.info("Saved summary to %s", filename)
         except OSError as e:
             logger.error(
