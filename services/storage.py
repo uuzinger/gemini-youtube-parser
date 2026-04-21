@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 
-import aiofiles
-
 from config.models import Config
 
 logger = logging.getLogger(__name__)
+
+
+def _write_file_sync(filepath: str, content: str) -> None:
+    """Synchronously write string to file with UTF-8 encoding."""
+    with open(filepath, "w", encoding="utf-8", errors="replace") as f:
+        f.write(content)
 
 
 class StorageService:
@@ -172,10 +177,7 @@ class StorageService:
             # Replace non-ASCII characters to avoid encoding errors
             content = "".join(c for c in content if ord(c) < 128)
 
-            async with aiofiles.open(
-                filename, "w", encoding="ascii"
-            ) as f:
-                await f.write(content)
+            await asyncio.to_thread(_write_file_sync, filename, content)
             logger.info("Saved summary to %s", filename)
         except OSError as e:
             logger.error(
