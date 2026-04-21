@@ -13,9 +13,10 @@ logger = logging.getLogger(__name__)
 
 
 def _write_file_sync(filepath: str, content: str) -> None:
-    """Synchronously write string to file with UTF-8 encoding."""
-    with open(filepath, "w", encoding="utf-8", errors="replace") as f:
-        f.write(content)
+    """Synchronously write string to file as UTF-8 bytes."""
+    content_bytes = content.encode("utf-8", errors="replace")
+    with open(filepath, "wb") as f:
+        f.write(content_bytes)
 
 
 class StorageService:
