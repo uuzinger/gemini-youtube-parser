@@ -170,7 +170,7 @@ class StorageService:
             )
 
             async with aiofiles.open(
-                filename, "w", encoding="utf-8"
+                filename, "w", encoding="utf-8", errors="replace"
             ) as f:
                 await f.write(content)
             logger.info("Saved summary to %s", filename)
