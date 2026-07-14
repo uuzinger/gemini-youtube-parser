@@ -49,3 +49,13 @@ class Config:
     dry_run: bool = False
     alerts_enabled: bool = True
     alert_subject_prefix: str = "[YT-Monitor ALERT]"
+    llm_provider: str = "gemini"
+    llm_host: str = ""
+    llm_port: int = 8080
+    llm_use_tls: bool = False
+    llm_api_key: str = ""
+    llm_model: str = ""
+    llm_temperature: float = 0.7
+    llm_max_output_tokens: int = 2048
+    llm_request_timeout: float = 300.0
+    llm_context_tokens: int = 262144

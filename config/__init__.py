@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import configparser
+import ipaddress
 import logging
+import re
 
 from .models import Config
 
@@ -13,6 +15,23 @@ VALID_HARM_CATEGORIES = frozenset([
     "HARM_CATEGORY_SEXUALLY_EXPLICIT",
     "HARM_CATEGORY_DANGEROUS_CONTENT",
 ])
+VALID_LLM_PROVIDERS = frozenset(["gemini", "llama_cpp", "openai_compatible"])
+HOSTNAME_PATTERN = re.compile(
+    r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+)
+
+
+def _is_valid_llm_host(host: str) -> bool:
+    if not host or any(char in host for char in "/@?#") or "://" in host:
+        return False
+
+    candidate = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+    try:
+        ipaddress.ip_address(candidate)
+        return True
+    except ValueError:
+        return ":" not in candidate and bool(HOSTNAME_PATTERN.fullmatch(candidate))
 
 
 def _parse_safety_settings(raw: str | None) -> list[dict[str, str]] | None:
@@ -66,16 +85,42 @@ def validate_config(config: Config) -> list[str]:
     errors: list[str] = []
     if not config.youtube_api_key or config.youtube_api_key == "YOUR_YOUTUBE_DATA_API_V3_KEY":
         errors.append("youtube_api_key")
-    if not config.gemini_api_key or config.gemini_api_key == "YOUR_GEMINI_API_KEY":
-        errors.append("gemini_api_key")
+    if config.llm_provider not in VALID_LLM_PROVIDERS:
+        errors.append(
+            "LLM provider must be gemini, llama_cpp, or openai_compatible"
+        )
+    elif config.llm_provider == "gemini":
+        if (
+            not config.gemini_api_key
+            or config.gemini_api_key == "YOUR_GEMINI_API_KEY"
+        ):
+            errors.append("gemini_api_key")
+        if not config.gemini_model:
+            errors.append("gemini model_name")
+    else:
+        if not _is_valid_llm_host(config.llm_host):
+            errors.append("LLM host (hostname or IP address only)")
+        if not 1 <= config.llm_port <= 65535:
+            errors.append("LLM port must be between 1 and 65535")
+        if (
+            not config.llm_api_key
+            or config.llm_api_key == "YOUR_LLAMACPP_API_KEY"
+        ):
+            errors.append("LLM api_key")
+        if not config.llm_model:
+            errors.append("LLM model_name")
+        if config.llm_request_timeout <= 0:
+            errors.append("LLM request_timeout must be greater than 0")
+        if config.llm_context_tokens < 1:
+            errors.append("LLM context_tokens must be greater than 0")
+        if config.llm_max_output_tokens < 1:
+            errors.append("LLM max_output_tokens must be greater than 0")
     if not config.channel_ids:
         errors.append("channels in the config file")
     if not config.smtp_server or not config.smtp_user or not config.smtp_password or not config.sender_email:
         errors.append("Email settings (smtp_server, smtp_user, smtp_password, sender_email)")
     if not config.default_recipients and not config.channel_recipients:
         errors.append("Email recipients (default_recipients or channel-specific)")
-    if not config.gemini_model:
-        errors.append("gemini model_name")
     if config.min_video_duration_minutes < 0:
         errors.append("min_video_duration_minutes must be >= 0")
     if config.max_results_per_channel < 1:
@@ -141,6 +186,26 @@ def load_config(config_path: str = "config.ini") -> Config:
             "alert_subject_prefix",
             fallback="[YT-Monitor ALERT]",
         ).strip(),
+        llm_provider=parser.get(
+            "LLM", "provider", fallback="gemini"
+        ).strip().lower(),
+        llm_host=parser.get("LLM", "host", fallback="").strip(),
+        llm_port=parser.getint("LLM", "port", fallback=8080),
+        llm_use_tls=parser.getboolean("LLM", "use_tls", fallback=False),
+        llm_api_key=parser.get("LLM", "api_key", fallback="").strip(),
+        llm_model=parser.get("LLM", "model_name", fallback="").strip(),
+        llm_temperature=parser.getfloat(
+            "LLM", "temperature", fallback=0.7
+        ),
+        llm_max_output_tokens=parser.getint(
+            "LLM", "max_output_tokens", fallback=2048
+        ),
+        llm_request_timeout=parser.getfloat(
+            "LLM", "request_timeout", fallback=300.0
+        ),
+        llm_context_tokens=parser.getint(
+            "LLM", "context_tokens", fallback=262144
+        ),
     )
 
     errors = validate_config(config)

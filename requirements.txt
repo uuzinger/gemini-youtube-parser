@@ -5,3 +5,4 @@ aiosmtplib==4.0.1
 tenacity>=8.2.3,<9.0.0
 aiofiles==24.1.0
 markdown==3.7
+openai==2.45.0

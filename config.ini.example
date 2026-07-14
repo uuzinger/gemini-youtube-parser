@@ -20,6 +20,31 @@ youtube_api_key = YOUR_YOUTUBE_DATA_API_V3_KEY
 gemini_api_key = YOUR_GEMINI_API_KEY
 
 
+[LLM]
+# Provider options:
+#   gemini             - use the Google Gemini API
+#   llama_cpp          - use a remote llama.cpp OpenAI-compatible server
+#   openai_compatible  - alias for llama_cpp
+provider = gemini
+
+# Required when provider = llama_cpp or openai_compatible.
+# Specify a hostname or IP address only; do not include http:// or /v1.
+host = 192.168.1.50
+port = 8080
+use_tls = False
+api_key = YOUR_LLAMACPP_API_KEY
+model_name = qwen3.6-a35b
+
+# Generation and connection defaults for the remote server.
+temperature = 0.7
+max_output_tokens = 2048
+request_timeout = 300
+
+# Must match the context size configured when llama-server starts.
+# This client uses it to detect likely overflows; it cannot change the server.
+context_tokens = 262144
+
+
 [CHANNELS]
 # Add channels to monitor here.
 # The format is: Your Personal Comment = ChannelID
@@ -35,7 +60,8 @@ Veritasium = UCHnyfMqiRRG1u-2pPa9-8AQ
 model_name = gemini-3.1-flash-lite-preview
 
 # --- Prompts for the AI ---
-# You can customize these prompts. Use {transcript} as the placeholder for the video transcript.
+# These prompts are used by both Gemini and llama.cpp providers.
+# Use {transcript} as the placeholder for the video transcript.
 
 prompt_executive_summary =
   Based on the following transcript, please provide a concise, one-paragraph executive summary.

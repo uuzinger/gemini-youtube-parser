@@ -62,6 +62,8 @@ gemini-youtube-parser/
 │   ├── model_validator.py     # Gemini model validation
 │   ├── youtube.py             # YouTube API wrapper
 │   ├── gemini.py              # Async Gemini service
+│   ├── llm.py                 # LLM provider interface and factory
+│   ├── openai_compatible.py   # Remote llama.cpp service
 │   ├── email.py               # Async email service
 │   └── storage.py             # Async file storage
 ├── utils/                     # Utility functions
@@ -95,7 +97,8 @@ gemini-youtube-parser/
     ```
     Then edit `config.ini` and fill in:
 
-    *   **`[API_KEYS]`**: `youtube_api_key` and `gemini_api_key`.
+    *   **`[API_KEYS]`**: `youtube_api_key`; `gemini_api_key` is required only when using Gemini.
+    *   **`[LLM]`**: Provider selection and remote llama.cpp connection settings.
     *   **`[CHANNELS]`**: One YouTube Channel ID per line (e.g., `My Channel = UCxxxxxxxxxxxxxx`).
     *   **`[GEMINI]`**: `model_name` (e.g., `gemini-2.5-flash`), prompts, and optional `safety_settings`.
     *   **`[EMAIL]`**: SMTP server, port, credentials, and sender email.
@@ -150,20 +153,41 @@ production `config.ini`, processed-video state, and scheduled job.
     and the existing `[EMAIL]` SMTP settings are valid. `dry_run = True`
     suppresses both summary emails and administrative alert emails.
 
-5.  **Review the configured Gemini model:** Compare `[GEMINI] model_name` with
-    the models available to your API key. The application now checks the live
-    Gemini model list on every run. If the configured model is unavailable,
-    the alert includes a suggested replacement and up to 20 available
-    text-generation models. It never changes `config.ini` automatically.
+5.  **Choose and configure an LLM provider:** Existing installations continue
+    using Gemini when `[LLM]` is absent. To use a remote llama.cpp server, add:
+    ```ini
+    [LLM]
+    provider = llama_cpp
+    host = 192.168.1.50
+    port = 8080
+    use_tls = False
+    api_key = YOUR_LLAMACPP_API_KEY
+    model_name = qwen3.6-a35b
+    temperature = 0.7
+    max_output_tokens = 2048
+    request_timeout = 300
+    context_tokens = 262144
+    ```
+    Replace the host, model label, and API key with the values used by your
+    server. Do not include `http://`, a port, or `/v1` in `host`.
 
-6.  **Review Gemini quota settings:** Set `gemini_rpm` and `gemini_rpd` to
+6.  **If continuing with Gemini, review the configured model:** Compare
+    `[GEMINI] model_name` with the models available to your API key. The
+    application checks the live Gemini model list on every run. If the
+    configured model is unavailable, the alert includes a suggested
+    replacement and up to 20 available text-generation models. It never
+    changes `config.ini` automatically.
+
+7.  **Review request-rate settings:** Set `gemini_rpm` and `gemini_rpd` to
     values appropriate for your current Google plan. Each processed video
     normally makes three Gemini generation requests, and startup model
     validation makes an additional request. Google does not expose your
     account's quota limits through the model-list API, so quota changes are
-    detected and reported when Gemini returns HTTP 429.
+    detected and reported when Gemini returns HTTP 429. These legacy setting
+    names also limit llama.cpp requests; their high defaults generally require
+    no adjustment for a local server.
 
-7.  **Run once manually before re-enabling the scheduler:**
+8.  **Run once manually before re-enabling the scheduler:**
     ```bash
     ./run.sh
     echo "exit code: $?"
@@ -171,7 +195,7 @@ production `config.ini`, processed-video state, and scheduled job.
     Review `logs/monitor.log` and confirm that normal summary email delivery
     still works. Fatal runtime errors now return a non-zero exit code.
 
-8.  **Optional developer verification:**
+9.  **Optional developer verification:**
     ```bash
     .venv/bin/python -m pip install -r requirements-dev.txt
     .venv/bin/python -m pytest -q
@@ -197,6 +221,64 @@ python run.py
 
 *   **Linux/macOS:** Use cron to run `python3 /path/to/project/run.sh` at your desired interval.
 *   **Windows:** Use Task Scheduler to run `python C:\path\to\project\run.py`. Set the "Start in" directory to your project path.
+
+## LLM Providers
+
+Gemini remains the default provider for backward compatibility. Set
+`[LLM] provider = llama_cpp` to use a remote llama.cpp server through its
+OpenAI-compatible API.
+
+### Remote llama.cpp server
+
+Start `llama-server` on the model host with an API key and the desired context
+window:
+
+```bash
+export LLAMACPP_API_KEY="replace-with-a-long-random-value"
+
+llama-server \
+  --model /path/to/qwen3.6-a35b.gguf \
+  --ctx-size 262144 \
+  --host 0.0.0.0 \
+  --port 8080 \
+  --api-key "$LLAMACPP_API_KEY"
+```
+
+Restrict port 8080 at the host firewall so only the monitor machine can reach
+it. The client configuration is:
+
+```ini
+[LLM]
+provider = llama_cpp
+host = 192.168.1.50
+port = 8080
+use_tls = False
+api_key = replace-with-the-same-api-key
+model_name = qwen3.6-a35b
+temperature = 0.7
+max_output_tokens = 2048
+request_timeout = 300
+context_tokens = 262144
+```
+
+`model_name` is sent in the OpenAI-compatible request. llama.cpp normally uses
+the model already loaded by the server, so a mismatch with `/v1/models` is
+logged as a warning rather than treated as a failure.
+
+`context_tokens` must match the server's `--ctx-size`. The client estimates
+prompt size before sending and reports likely overflow, but this is an
+approximation rather than model-specific tokenization.
+
+With `use_tls = False`, the API key and full video transcripts travel as
+unencrypted HTTP. Use this only on a trusted, access-controlled network. For
+traffic crossing an untrusted network, terminate HTTPS at llama.cpp or a
+reverse proxy and set `use_tls = True`. TLS certificate verification remains
+enabled.
+
+At startup the application calls `/v1/models` to verify connectivity and
+authentication. Connection failures, timeouts, HTTP errors, context overflows,
+and circuit-breaker events flow into the same consolidated administrative
+alert used for Gemini failures.
 
 ## Configuration Reference
 
@@ -292,6 +374,7 @@ This is useful for testing your configuration and verifying email content before
 | Package | Purpose |
 |---------|---------|
 | `google-genai` | Google Gemini API client (async) |
+| `openai` | Async client for remote llama.cpp/OpenAI-compatible servers |
 | `google-api-python-client` | YouTube Data API client |
 | `youtube-transcript-api` | YouTube transcript fetching |
 | `aiosmtplib` | Async SMTP for email |

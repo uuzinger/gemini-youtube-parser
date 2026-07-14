@@ -15,8 +15,8 @@ from services.youtube import (
     get_video_details,
     get_transcript,
 )
-from services.gemini import GeminiService
 from services.email import EmailService
+from services.llm import SummarizerBackend, build_summarizer
 from services.storage import StorageService
 from services.rate_limiter import RateLimiter
 from services.model_validator import (
@@ -49,14 +49,49 @@ async def record_video_failure(
     await storage_service.save_failed_videos()
 
 
+async def check_gemini_model(config: Config, report: RunReport) -> None:
+    """Check Gemini's live model list when Gemini is the active provider."""
+    try:
+        model_result = await asyncio.to_thread(
+            validate_model,
+            config.gemini_api_key,
+            config.gemini_model,
+        )
+    except Exception as e:
+        issue = f"Could not check the current Gemini model list: {e}"
+        report.add_model_issue(issue)
+        logger.warning("%s", issue)
+    else:
+        if not model_result.configured_available:
+            available = ", ".join(model_result.available_models[:20])
+            issue = (
+                f"Configured model '{config.gemini_model}' is unavailable. "
+                f"Suggested model: "
+                f"'{model_result.suggested_model or 'none'}'. "
+                f"Available text models: {available or 'none returned'}."
+            )
+            report.add_model_issue(issue)
+            logger.warning("%s", issue)
+
+    suggestion = read_model_suggestion()
+    if suggestion:
+        logger.warning(
+            "Gemini model suggestion: %s",
+            suggestion.get("message", "No details available."),
+        )
+        report.add_model_issue(
+            suggestion.get("message", "Gemini model update required.")
+        )
+
+
 async def process_video(
     config: Config,
     youtube,
-    gemini_service: GeminiService,
+    summarizer: SummarizerBackend,
     email_service: EmailService,
     storage_service: StorageService,
     youtube_limiter: RateLimiter,
-    gemini_limiter: RateLimiter,
+    llm_limiter: RateLimiter,
     channel_name: str,
     video,
     report: RunReport,
@@ -85,8 +120,8 @@ async def process_video(
         await storage_service.save_failed_videos()
         return
 
-    # Rate limit Gemini API
-    await gemini_limiter.acquire()
+    # Rate limit the configured LLM provider.
+    await llm_limiter.acquire()
 
     # Fetch transcript
     transcript = get_transcript(video_id)
@@ -104,13 +139,13 @@ async def process_video(
     try:
         exec_summary, detailed_summary, key_quotes = (
             await asyncio.gather(
-                gemini_service.generate_summary(
+                summarizer.generate_summary(
                     transcript, config.prompt_exec_summary
                 ),
-                gemini_service.generate_summary(
+                summarizer.generate_summary(
                     transcript, config.prompt_detailed_summary
                 ),
-                gemini_service.generate_summary(
+                summarizer.generate_summary(
                     transcript, config.prompt_key_quotes
                 ),
             )
@@ -127,7 +162,7 @@ async def process_video(
         )
         return
     finally:
-        for issue in gemini_service.drain_alert_events():
+        for issue in summarizer.drain_alert_events():
             report.add_service_issue(issue)
 
     # Check for errors in summaries
@@ -136,7 +171,7 @@ async def process_video(
     )
 
     if is_error:
-        error_msg = "Gemini generation failed"
+        error_msg = "LLM generation failed"
         await record_video_failure(
             storage_service,
             report,
@@ -198,38 +233,8 @@ async def run_monitor(
     processed_count = 0
     retry_count = 0
 
-    # Check the configured model against the API's current model list.
-    try:
-        model_result = await asyncio.to_thread(
-            validate_model,
-            config.gemini_api_key,
-            config.gemini_model,
-        )
-    except Exception as e:
-        issue = f"Could not check the current Gemini model list: {e}"
-        report.add_model_issue(issue)
-        logger.warning("%s", issue)
-    else:
-        if not model_result.configured_available:
-            available = ", ".join(model_result.available_models[:20])
-            issue = (
-                f"Configured model '{config.gemini_model}' is unavailable. "
-                f"Suggested model: "
-                f"'{model_result.suggested_model or 'none'}'. "
-                f"Available text models: {available or 'none returned'}."
-            )
-            report.add_model_issue(issue)
-            logger.warning("%s", issue)
-
-    suggestion = read_model_suggestion()
-    if suggestion:
-        logger.warning(
-            "Gemini model suggestion: %s",
-            suggestion.get("message", "No details available."),
-        )
-        report.add_model_issue(
-            suggestion.get("message", "Gemini model update required.")
-        )
+    if config.llm_provider == "gemini":
+        await check_gemini_model(config, report)
 
     # Build YouTube client
     try:
@@ -239,14 +244,14 @@ async def run_monitor(
         raise
 
     # Initialize services
-    gemini_service = GeminiService(config)
+    summarizer = build_summarizer(config)
     storage_service = StorageService(config)
 
     # Rate limiters
     youtube_limiter = RateLimiter(
         rpm=config.youtube_rpm, rpd=config.youtube_rpd
     )
-    gemini_limiter = RateLimiter(
+    llm_limiter = RateLimiter(
         rpm=config.gemini_rpm, rpd=config.gemini_rpd
     )
 
@@ -254,9 +259,9 @@ async def run_monitor(
     await storage_service.load_processed_videos()
     await storage_service.load_failed_videos()
 
-    # Validate Gemini model early
+    # Validate the configured LLM provider before processing videos.
     try:
-        await gemini_service.validate_model_early()
+        await summarizer.validate_model_early()
     except ModelNotFoundError as e:
         report.add_model_issue(str(e))
         logger.warning(
@@ -266,15 +271,15 @@ async def run_monitor(
         )
     except Exception as e:
         report.add_service_issue(
-            f"Gemini model validation encountered an issue: {e}"
+            f"LLM provider validation encountered an issue: {e}"
         )
         logger.warning(
-            "Gemini model validation encountered an issue: %s. "
+            "LLM provider validation encountered an issue: %s. "
             "Processing will continue.",
             e,
         )
     finally:
-        for issue in gemini_service.drain_alert_events():
+        for issue in summarizer.drain_alert_events():
             report.add_service_issue(issue)
 
     # Phase 1: Retry failed videos first
@@ -337,11 +342,11 @@ async def run_monitor(
             await process_video(
                 config,
                 youtube,
-                gemini_service,
+                summarizer,
                 email_service,
                 storage_service,
                 youtube_limiter,
-                gemini_limiter,
+                llm_limiter,
                 channel_name,
                 retry_video,
                 report,
@@ -375,11 +380,11 @@ async def run_monitor(
             await process_video(
                 config,
                 youtube,
-                gemini_service,
+                summarizer,
                 email_service,
                 storage_service,
                 youtube_limiter,
-                gemini_limiter,
+                llm_limiter,
                 channel_name,
                 video,
                 report,
