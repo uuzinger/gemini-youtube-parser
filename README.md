@@ -164,7 +164,9 @@ production `config.ini`, processed-video state, and scheduled job.
     api_key = YOUR_LLAMACPP_API_KEY
     model_name = qwen3.6-a35b
     temperature = 0.7
-    max_output_tokens = 2048
+    executive_max_output_tokens = 1024
+    detailed_max_output_tokens = 8192
+    quotes_max_output_tokens = 2048
     request_timeout = 300
     context_tokens = 262144
     ```
@@ -256,7 +258,9 @@ use_tls = False
 api_key = replace-with-the-same-api-key
 model_name = qwen3.6-a35b
 temperature = 0.7
-max_output_tokens = 2048
+executive_max_output_tokens = 1024
+detailed_max_output_tokens = 8192
+quotes_max_output_tokens = 2048
 request_timeout = 300
 context_tokens = 262144
 ```
@@ -268,6 +272,14 @@ logged as a warning rather than treated as a failure.
 `context_tokens` must match the server's `--ctx-size`. The client estimates
 prompt size before sending and reports likely overflow, but this is an
 approximation rather than model-specific tokenization.
+
+The three output limits apply independently to executive summaries, detailed
+summaries, and quote extraction. Increasing a limit does not force the model
+to use all available tokens. If Gemini or llama.cpp reports that generation
+stopped because a limit was reached, the run records a failed summary and
+sends an administrative alert instead of silently emailing truncated output.
+The previous `max_output_tokens` setting is still accepted and applies its
+value to all three summary types.
 
 With `use_tls = False`, the API key and full video transcripts travel as
 unencrypted HTTP. Use this only on a trusted, access-controlled network. For

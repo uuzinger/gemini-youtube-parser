@@ -25,6 +25,10 @@ class ModelNotFoundError(APIError):
         super().__init__(msg)
 
 
+class OutputTruncatedError(APIError):
+    """Raised when an LLM stops because its output-token limit was reached."""
+
+
 class TranscriptError(YouTubeMonitorError):
     """Raised when transcript retrieval fails."""
 

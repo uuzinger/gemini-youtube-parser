@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
 import sys
-import time
 
 from config import load_config
 from services.youtube import build_youtube_client, get_transcript
-from services.gemini import GeminiService
+from services.llm import build_summarizer
 from utils.helpers import parse_iso8601_duration, format_duration_seconds
 
 
@@ -35,7 +33,7 @@ async def run(video_id: str, output_dir: str | None = None) -> None:
     from utils.logging import setup_logging
     setup_logging(log_file=config.log_file, log_level=config.log_level)
 
-    gemini_service = GeminiService(config)
+    summarizer = build_summarizer(config)
 
     # Fetch transcript
     transcript = get_transcript(video_id)
@@ -62,13 +60,15 @@ async def run(video_id: str, output_dir: str | None = None) -> None:
 
     # Generate executive summary in parallel with a brief description prompt
     exec_summary, description = await asyncio.gather(
-        gemini_service.generate_summary(
+        summarizer.generate_summary(
             transcript,
             "Based on the following transcript, please provide a concise, one-paragraph executive summary.\nFocus on the main topic, key arguments, and the overall conclusion of the video.\nThe summary should be easy to understand for someone who has not seen the video.\nTRANSCRIPT:\n{transcript}",
+            max_output_tokens=config.llm_executive_max_output_tokens,
         ),
-        gemini_service.generate_summary(
+        summarizer.generate_summary(
             description if (description := snippet.get("description", "")) else transcript[:4000],
             "Provide a concise 2-3 sentence description of this video.\n\n{transcript}",
+            max_output_tokens=config.llm_executive_max_output_tokens,
         ),
     )
 

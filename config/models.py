@@ -56,6 +56,8 @@ class Config:
     llm_api_key: str = ""
     llm_model: str = ""
     llm_temperature: float = 0.7
-    llm_max_output_tokens: int = 2048
+    llm_executive_max_output_tokens: int = 1024
+    llm_detailed_max_output_tokens: int = 8192
+    llm_quotes_max_output_tokens: int = 2048
     llm_request_timeout: float = 300.0
     llm_context_tokens: int = 262144

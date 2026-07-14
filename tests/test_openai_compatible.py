@@ -18,7 +18,9 @@ def _config(**overrides):
         "llm_api_key": "local-example-key",
         "llm_model": "qwen3.6-a35b",
         "llm_temperature": 0.7,
-        "llm_max_output_tokens": 2048,
+        "llm_executive_max_output_tokens": 1024,
+        "llm_detailed_max_output_tokens": 8192,
+        "llm_quotes_max_output_tokens": 2048,
         "llm_request_timeout": 300.0,
         "llm_context_tokens": 262144,
     }
@@ -40,7 +42,8 @@ async def test_generates_summary_with_remote_server() -> None:
         return_value=SimpleNamespace(
             choices=[
                 SimpleNamespace(
-                    message=SimpleNamespace(content="Local summary")
+                    message=SimpleNamespace(content="Local summary"),
+                    finish_reason="stop",
                 )
             ]
         )
@@ -51,13 +54,14 @@ async def test_generates_summary_with_remote_server() -> None:
     result = await service.generate_summary(
         "Transcript text",
         "Summarize: {transcript}",
+        max_output_tokens=1024,
     )
 
     assert result == "Local summary"
     request = create.await_args.kwargs
     assert request["model"] == "qwen3.6-a35b"
     assert request["temperature"] == 0.7
-    assert request["max_tokens"] == 2048
+    assert request["max_tokens"] == 1024
 
 
 @pytest.mark.asyncio
@@ -94,7 +98,10 @@ async def test_authentication_failure_is_not_retried() -> None:
 async def test_likely_context_overflow_is_rejected_before_request() -> None:
     create = AsyncMock()
     service = OpenAICompatibleService(
-        _config(llm_context_tokens=10, llm_max_output_tokens=5)
+        _config(
+            llm_context_tokens=10,
+            llm_detailed_max_output_tokens=5,
+        )
     )
     service.client = _chat_client(create)
 
@@ -106,6 +113,34 @@ async def test_likely_context_overflow_is_rejected_before_request() -> None:
     assert result.startswith("Error: Prompt may exceed")
     create.assert_not_awaited()
     assert "context" in service.drain_alert_events()[0]
+
+
+@pytest.mark.asyncio
+async def test_length_finish_reason_is_reported_as_truncation() -> None:
+    create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="Partial summary"),
+                    finish_reason="length",
+                )
+            ]
+        )
+    )
+    service = OpenAICompatibleService(_config())
+    service.client = _chat_client(create)
+
+    result = await service.generate_summary(
+        "Transcript text",
+        "Summarize: {transcript}",
+        max_output_tokens=8192,
+    )
+
+    assert result.startswith("Error:")
+    assert "truncated" in result
+    assert service.drain_alert_events() == [
+        "llama.cpp output was truncated after reaching its 8192 token limit."
+    ]
 
 
 @pytest.mark.asyncio

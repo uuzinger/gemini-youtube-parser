@@ -140,13 +140,23 @@ async def process_video(
         exec_summary, detailed_summary, key_quotes = (
             await asyncio.gather(
                 summarizer.generate_summary(
-                    transcript, config.prompt_exec_summary
+                    transcript,
+                    config.prompt_exec_summary,
+                    max_output_tokens=(
+                        config.llm_executive_max_output_tokens
+                    ),
                 ),
                 summarizer.generate_summary(
-                    transcript, config.prompt_detailed_summary
+                    transcript,
+                    config.prompt_detailed_summary,
+                    max_output_tokens=(
+                        config.llm_detailed_max_output_tokens
+                    ),
                 ),
                 summarizer.generate_summary(
-                    transcript, config.prompt_key_quotes
+                    transcript,
+                    config.prompt_key_quotes,
+                    max_output_tokens=config.llm_quotes_max_output_tokens,
                 ),
             )
         )

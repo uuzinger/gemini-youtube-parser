@@ -6,7 +6,13 @@ from config.models import Config
 
 
 class SummarizerBackend(Protocol):
-    async def generate_summary(self, transcript: str, prompt: str) -> str:
+    async def generate_summary(
+        self,
+        transcript: str,
+        prompt: str,
+        *,
+        max_output_tokens: int | None = None,
+    ) -> str:
         """Generate one summary from a transcript and prompt template."""
 
     async def validate_model_early(self) -> str | None:

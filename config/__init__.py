@@ -113,8 +113,13 @@ def validate_config(config: Config) -> list[str]:
             errors.append("LLM request_timeout must be greater than 0")
         if config.llm_context_tokens < 1:
             errors.append("LLM context_tokens must be greater than 0")
-        if config.llm_max_output_tokens < 1:
-            errors.append("LLM max_output_tokens must be greater than 0")
+    output_limits = (
+        config.llm_executive_max_output_tokens,
+        config.llm_detailed_max_output_tokens,
+        config.llm_quotes_max_output_tokens,
+    )
+    if any(limit < 1 for limit in output_limits):
+        errors.append("LLM output token limits must be greater than 0")
     if not config.channel_ids:
         errors.append("channels in the config file")
     if not config.smtp_server or not config.smtp_user or not config.smtp_password or not config.sender_email:
@@ -137,6 +142,9 @@ def load_config(config_path: str = "config.ini") -> Config:
     default_recipients, channel_recipients = _parse_channel_recipients(parser)
     safety_settings = _parse_safety_settings(
         parser.get("GEMINI", "safety_settings", fallback=None)
+    )
+    legacy_max_output_tokens = parser.getint(
+        "LLM", "max_output_tokens", fallback=None
     )
 
     config = Config(
@@ -197,8 +205,32 @@ def load_config(config_path: str = "config.ini") -> Config:
         llm_temperature=parser.getfloat(
             "LLM", "temperature", fallback=0.7
         ),
-        llm_max_output_tokens=parser.getint(
-            "LLM", "max_output_tokens", fallback=2048
+        llm_executive_max_output_tokens=parser.getint(
+            "LLM",
+            "executive_max_output_tokens",
+            fallback=(
+                legacy_max_output_tokens
+                if legacy_max_output_tokens is not None
+                else 1024
+            ),
+        ),
+        llm_detailed_max_output_tokens=parser.getint(
+            "LLM",
+            "detailed_max_output_tokens",
+            fallback=(
+                legacy_max_output_tokens
+                if legacy_max_output_tokens is not None
+                else 8192
+            ),
+        ),
+        llm_quotes_max_output_tokens=parser.getint(
+            "LLM",
+            "quotes_max_output_tokens",
+            fallback=(
+                legacy_max_output_tokens
+                if legacy_max_output_tokens is not None
+                else 2048
+            ),
         ),
         llm_request_timeout=parser.getfloat(
             "LLM", "request_timeout", fallback=300.0

@@ -14,7 +14,7 @@ from tenacity import (
 )
 
 from config.models import Config
-from .exceptions import ModelNotFoundError
+from .exceptions import ModelNotFoundError, OutputTruncatedError
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,11 @@ class GeminiService:
         return events
 
     async def generate_summary(
-        self, transcript: str, prompt: str
+        self,
+        transcript: str,
+        prompt: str,
+        *,
+        max_output_tokens: int | None = None,
     ) -> str:
         """Generate a summary using Gemini with retry logic."""
         if self._consecutive_failures >= self._circuit_breaker_threshold:
@@ -109,7 +113,10 @@ class GeminiService:
         full_prompt = prompt.format(transcript=transcript)
 
         try:
-            response = await self._generate_with_retry(full_prompt)
+            response = await self._generate_with_retry(
+                full_prompt,
+                max_output_tokens,
+            )
             self._consecutive_failures = 0
             return response.strip()
         except ModelNotFoundError:
@@ -142,7 +149,11 @@ class GeminiService:
         retry=retry_if_exception_type((genai.errors.APIError,)),
         reraise=True,
     )
-    async def _generate_with_retry(self, prompt: str) -> str:
+    async def _generate_with_retry(
+        self,
+        prompt: str,
+        max_output_tokens: int | None,
+    ) -> str:
         """Internal method with retry logic for Gemini API calls."""
         try:
             response = await self.client.aio.models.generate_content(
@@ -150,9 +161,19 @@ class GeminiService:
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.7,
+                    max_output_tokens=max_output_tokens,
                     safety_settings=self._safety_settings,
                 ),
             )
+            if response.candidates:
+                finish_reason = response.candidates[0].finish_reason
+                if finish_reason == types.FinishReason.MAX_TOKENS:
+                    issue = (
+                        "Gemini output was truncated after reaching its "
+                        f"{max_output_tokens} token limit."
+                    )
+                    self._record_alert_event(issue)
+                    raise OutputTruncatedError(issue)
             return response.text
         except genai.errors.APIError as e:
             if e.code in (404, 400):

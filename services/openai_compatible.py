@@ -16,6 +16,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from tenacity import wait_exponential
 
 from config.models import Config
+from .exceptions import OutputTruncatedError
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,8 @@ class OpenAICompatibleService:
                 "llama.cpp rejected the request (400): "
                 f"{self._safe_error(error)}"
             )
+        elif isinstance(error, OutputTruncatedError):
+            issue = str(error)
         elif isinstance(error, APIStatusError):
             issue = (
                 f"llama.cpp API error ({error.status_code}): "
@@ -92,6 +95,8 @@ class OpenAICompatibleService:
         self,
         transcript: str,
         prompt: str,
+        *,
+        max_output_tokens: int | None = None,
     ) -> str:
         if self._consecutive_failures >= self._circuit_breaker_threshold:
             issue = (
@@ -106,10 +111,13 @@ class OpenAICompatibleService:
             return "Error: Missing transcript or prompt."
 
         full_prompt = prompt.format(transcript=transcript)
-        estimated_input_tokens = max(1, (len(full_prompt) + 3) // 4)
-        estimated_total_tokens = (
-            estimated_input_tokens + self.config.llm_max_output_tokens
+        output_limit = (
+            max_output_tokens
+            if max_output_tokens is not None
+            else self.config.llm_detailed_max_output_tokens
         )
+        estimated_input_tokens = max(1, (len(full_prompt) + 3) // 4)
+        estimated_total_tokens = estimated_input_tokens + output_limit
         if estimated_total_tokens > self.config.llm_context_tokens:
             issue = (
                 "Prompt may exceed the configured llama.cpp context: "
@@ -121,7 +129,10 @@ class OpenAICompatibleService:
             return f"Error: {issue}"
 
         try:
-            response = await self._generate_with_retry(full_prompt)
+            response = await self._generate_with_retry(
+                full_prompt,
+                output_limit,
+            )
             self._consecutive_failures = 0
             return response
         except Exception as e:
@@ -146,14 +157,24 @@ class OpenAICompatibleService:
         retry=retry_if_exception_type(_RETRYABLE_ERRORS),
         reraise=True,
     )
-    async def _generate_with_retry(self, prompt: str) -> str:
+    async def _generate_with_retry(
+        self,
+        prompt: str,
+        max_output_tokens: int,
+    ) -> str:
         response = await self.client.chat.completions.create(
             model=self.config.llm_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=self.config.llm_temperature,
-            max_tokens=self.config.llm_max_output_tokens,
+            max_tokens=max_output_tokens,
         )
-        content = response.choices[0].message.content
+        choice = response.choices[0]
+        if choice.finish_reason == "length":
+            raise OutputTruncatedError(
+                "llama.cpp output was truncated after reaching its "
+                f"{max_output_tokens} token limit."
+            )
+        content = choice.message.content
         if not content:
             raise ValueError("llama.cpp returned an empty response")
         return content.strip()
