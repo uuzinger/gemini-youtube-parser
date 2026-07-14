@@ -8,7 +8,7 @@ import aiosmtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-from config.models import Config, Video
+from config.models import Config, Video, WeeklyVideoEntry
 from .exceptions import EmailError
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,84 @@ class EmailService:
             return True
         except Exception:
             logger.exception("Failed to send administrative alert.")
+            return False
+
+    async def send_weekly_digest(
+        self,
+        recipients: list[str],
+        subject: str,
+        entries: list[WeeklyVideoEntry],
+    ) -> bool:
+        """Send one consolidated weekly digest covering multiple videos."""
+        if not recipients:
+            logger.warning(
+                "No recipients for weekly digest '%s'. Skipping.", subject
+            )
+            return False
+        if not entries:
+            logger.info(
+                "No videos to report for weekly digest '%s'. Skipping.", subject
+            )
+            return False
+
+        sections = []
+        for entry in entries:
+            exec_html = markdown.markdown(entry.exec_summary or "")
+            detailed_html = markdown.markdown(entry.detailed_summary or "")
+            published = entry.video.published_at.split("T")[0] or "Unknown"
+            sections.append(
+                f"""
+                <h2>{html.escape(entry.video.title)}</h2>
+                <p>
+                    <b>Channel:</b> {html.escape(entry.channel_name)}<br>
+                    <b>Published:</b> {html.escape(published)}<br>
+                    <b>Duration:</b> {html.escape(entry.duration)}<br>
+                    <b>Link:</b> <a href="https://www.youtube.com/watch?v={entry.video.id}">https://www.youtube.com/watch?v={entry.video.id}</a>
+                </p>
+                <h3>Executive Summary</h3><div>{exec_html}</div>
+                <h3>Detailed Summary</h3><div>{detailed_html}</div>
+                <hr>
+                """
+            )
+
+        body_html = (
+            "<html><body>"
+            f"<p>Here is your weekly digest of {len(entries)} video(s), "
+            "in chronological order:</p>"
+            f"{''.join(sections)}"
+            "</body></html>"
+        )
+
+        if self.config.dry_run:
+            logger.info(
+                "DRY RUN - Weekly digest not sent. To: %s Subject: %s (%d videos)",
+                ", ".join(recipients),
+                subject,
+                len(entries),
+            )
+            return False
+
+        msg = MIMEMultipart("alternative")
+        msg["From"] = self.config.sender_email
+        msg["To"] = ", ".join(recipients)
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body_html, "html", "utf-8"))
+
+        try:
+            await aiosmtplib.send(
+                msg,
+                hostname=self.config.smtp_server,
+                port=self.config.smtp_port,
+                username=self.config.smtp_user,
+                password=self.config.smtp_password,
+                start_tls=True,
+            )
+            logger.info(
+                "Weekly digest sent to %s (%d videos).", recipients, len(entries)
+            )
+            return True
+        except Exception:
+            logger.exception("Failed to send weekly digest to %s.", recipients)
             return False
 
     async def send_notification(

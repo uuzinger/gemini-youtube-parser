@@ -18,6 +18,7 @@ The application performs the following actions:
 7.  **Sends Email Notifications:** Dispatches formatted HTML emails with summaries to configured recipients.
 8.  **Channel-Specific Recipients:** Supports per-channel email routing with a default fallback list.
 9.  **Proactive Problem Alerts:** Sends one consolidated run-health email to `default_recipients` when videos fail, Gemini quotas change, a model becomes unavailable, or the run crashes.
+10. **Weekly Digest (optional):** A separate script (`weekly_summary.py`) can be scheduled once per week to email each recipient one consolidated digest of every video posted on their channels in the last 7 days, in chronological order.
 
 ## Features
 
@@ -69,11 +70,13 @@ gemini-youtube-parser/
 ├── utils/                     # Utility functions
 │   ├── logging.py             # Structured logging setup
 │   └── helpers.py             # String/date utilities
-├── main.py                    # Async entry point
+├── main.py                    # Async entry point (daily monitor)
+├── weekly_summary.py          # Async entry point (weekly digest)
 ├── run.py                     # Windows wrapper
 ├── run.sh                     # Linux/macOS wrapper
 ├── setup.py                   # Setup script
-├── config.ini                 # Configuration file
+├── config.ini                 # Configuration file (daily monitor)
+├── summary.ini                # Configuration file (weekly digest)
 ├── requirements.txt           # Python dependencies
 └── .gitignore
 ```
@@ -224,6 +227,56 @@ python run.py
 *   **Linux/macOS:** Use cron to run `python3 /path/to/project/run.sh` at your desired interval.
 *   **Windows:** Use Task Scheduler to run `python C:\path\to\project\run.py`. Set the "Start in" directory to your project path.
 
+## Weekly Digest
+
+`weekly_summary.py` is a separate, independent script intended to run once a
+week (for example, Monday morning) via cron. Unlike the daily monitor, it does
+not track processed/failed video state and does not send a per-video email;
+instead it looks back over a configurable window and sends each recipient one
+combined email covering every video posted across their channels.
+
+### Setup
+
+1.  **Configure `summary.ini`:**
+    ```bash
+    cp summary.ini.example summary.ini
+    ```
+    Edit `summary.ini` and fill in:
+    *   **`[CHANNELS]`**: The channels to include in the digest (can differ
+        from `config.ini`'s `[CHANNELS]`).
+    *   **`[CHANNEL_RECIPIENTS]`**: Which email address(es) receive each
+        channel's videos, plus an optional `default_recipients` fallback for
+        channels with no specific entry. All channels routed to the same
+        email address are combined into that recipient's single weekly email.
+    *   **`[SETTINGS]`**: `window_days` (default 7), `max_results_per_channel`,
+        `subject_prefix`, `log_file`, `log_level`.
+
+    `summary.ini` is ignored by Git, like `config.ini`.
+
+2.  **Credentials come from `config.ini`:** `weekly_summary.py` loads
+    `config.ini` for the YouTube API key, the configured LLM provider, prompts
+    (`prompt_executive_summary` and `prompt_detailed_summary`), per-summary
+    token limits, and SMTP settings. There is nothing else to configure for
+    credentials.
+
+3.  **Run it manually to test:**
+    ```bash
+    .venv/bin/python weekly_summary.py
+    ```
+    Set `dry_run = True` in `config.ini`'s `[SETTINGS]` first to log the
+    digest content instead of sending it.
+
+4.  **Schedule with cron (Linux/macOS):**
+    ```cron
+    # Every Monday at 7:00 AM
+    0 7 * * 1 cd /path/to/gemini-youtube-parser && .venv/bin/python weekly_summary.py >> logs/weekly_cron.log 2>&1
+    ```
+
+Failures (missing transcripts, LLM errors, a fatal crash) are collected the
+same way as the daily monitor and sent as one administrative alert to
+`config.ini`'s `default_recipients`; they do not stop the digest from being
+sent to unaffected recipients.
+
 ## LLM Providers
 
 Gemini remains the default provider for backward compatibility. Set
@@ -322,6 +375,16 @@ Controls API request rates to avoid hitting quotas:
 `alerts_enabled` defaults to `True` and controls consolidated problem emails.
 `alert_subject_prefix` defaults to `[YT-Monitor ALERT]`. Alerts go only to
 `default_recipients` and are sent once at the end of a problematic run.
+
+### `summary.ini` `[SETTINGS]`
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `window_days` | 7 | How many days back to look for new videos per channel |
+| `max_results_per_channel` | 25 | Safety cap on videos considered per channel |
+| `subject_prefix` | `Weekly YouTube Digest` | Prefix for the weekly email subject |
+| `log_file` | `logs/weekly.log` | Log file path for `weekly_summary.py` |
+| `log_level` | `INFO` | Logging level for `weekly_summary.py` |
 
 ## Model Validation
 

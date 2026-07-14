@@ -20,6 +20,31 @@ class ChannelRecipient:
 
 
 @dataclass
+class WeeklyConfig:
+    """Configuration for the weekly digest script, loaded from summary.ini."""
+
+    channel_ids: list[str]
+    channel_recipients: dict[str, list[str]]
+    default_recipients: list[str] = field(default_factory=list)
+    window_days: int = 7
+    max_results_per_channel: int = 25
+    subject_prefix: str = "Weekly YouTube Digest"
+    log_file: str = "logs/weekly.log"
+    log_level: str = "INFO"
+
+
+@dataclass
+class WeeklyVideoEntry:
+    """One summarized video to include in a recipient's weekly digest."""
+
+    channel_name: str
+    video: Video
+    duration: str
+    exec_summary: str
+    detailed_summary: str
+
+
+@dataclass
 class Config:
     youtube_api_key: str
     gemini_api_key: str

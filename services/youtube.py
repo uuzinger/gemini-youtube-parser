@@ -94,6 +94,76 @@ def get_latest_videos(
     return videos
 
 
+def get_videos_published_since(
+    youtube, channel_id: str, since: datetime, max_results: int = 50
+) -> list[Video]:
+    """Get videos from a channel published on or after `since`, oldest first.
+
+    Paginates through the channel's uploads playlist (newest first) and stops
+    as soon as an older video is encountered, since uploads are always
+    returned in reverse-chronological order.
+    """
+    try:
+        response = (
+            youtube.channels()
+            .list(part="contentDetails", id=channel_id)
+            .execute()
+        )
+        uploads_id = response["items"][0]["contentDetails"]["relatedPlaylists"][
+            "uploads"
+        ]
+    except (GoogleAPIError, IndexError, KeyError) as e:
+        logger.error("Failed to get uploads playlist for %s: %s", channel_id, e)
+        return []
+
+    videos: list[Video] = []
+    page_token: str | None = None
+    while len(videos) < max_results:
+        try:
+            response = (
+                youtube.playlistItems()
+                .list(
+                    part="snippet,contentDetails",
+                    playlistId=uploads_id,
+                    maxResults=min(50, max_results - len(videos)),
+                    pageToken=page_token,
+                )
+                .execute()
+            )
+        except GoogleAPIError as e:
+            logger.error(
+                "Failed to get playlist items for %s: %s", channel_id, e
+            )
+            break
+
+        reached_older_video = False
+        for item in response.get("items", []):
+            snippet = item["snippet"]
+            published_at = datetime.fromisoformat(
+                snippet["publishedAt"].replace("Z", "+00:00")
+            )
+            if published_at < since:
+                reached_older_video = True
+                break
+            videos.append(
+                Video(
+                    id=item["contentDetails"]["videoId"],
+                    title=snippet["title"],
+                    channel_id=channel_id,
+                    published_at=snippet["publishedAt"],
+                )
+            )
+            if len(videos) >= max_results:
+                break
+
+        page_token = response.get("nextPageToken")
+        if reached_older_video or not page_token:
+            break
+
+    videos.sort(key=lambda v: v.published_at)
+    return videos
+
+
 def get_video_details(youtube, video_id: str) -> str | None:
     """Get the ISO 8601 duration for a video."""
     try:

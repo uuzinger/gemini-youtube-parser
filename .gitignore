@@ -20,6 +20,7 @@ logs/
 processed_videos.json
 .model_suggestion
 config.ini
+summary.ini
 
 # Output directories
 output/

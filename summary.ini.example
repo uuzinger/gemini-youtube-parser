@@ -1,0 +1,51 @@
+# ---------------------------------------------------------------------------
+# Configuration for the Weekly YouTube Digest (weekly_summary.py)
+# ---------------------------------------------------------------------------
+# This file only configures WHICH channels/recipients get a weekly digest and
+# HOW FAR BACK to look. API credentials (YouTube, LLM, SMTP) are intentionally
+# not duplicated here - they are read from config.ini, the same file used by
+# the daily monitor (main.py).
+#
+# Run this script once per week from cron, e.g.:
+#   0 7 * * 1 cd /path/to/gemini-youtube-parser && .venv/bin/python weekly_summary.py
+# ---------------------------------------------------------------------------
+
+[CHANNELS]
+# Add channels to include in the weekly digest.
+# The format is: Your Personal Comment = ChannelID
+A16z Podcast = UCEsQn_1b9gWn4e4v1i0zV3A
+Lex Fridman = UCSsHebO0_wpmK1wIYOw_6GA
+Veritasium = UCHnyfMqiRRG1u-2pPa9-8AQ
+
+
+[CHANNEL_RECIPIENTS]
+# Each channel's videos are emailed to the address(es) listed here.
+# All channels for the same recipient are combined into ONE weekly email,
+# with videos from every channel listed in chronological order.
+
+# (Optional) Fallback recipients used for any channel above with no
+# channel-specific entry below.
+default_recipients = your.email@example.com
+
+# The key MUST be the ChannelID. Comma-separate multiple emails.
+UCEsQn_1b9gWn4e4v1i0zV3A = a16z-fan-group@example.com
+UCSsHebO0_wpmK1wIYOw_6GA = lex-updates@example.com, another-lex-fan@example.com
+UCHnyfMqiRRG1u-2pPa9-8AQ = your.email@example.com
+
+
+[SETTINGS]
+# How many days back to look for new videos on each channel.
+window_days = 7
+
+# Safety cap on how many videos per channel to consider (in case a channel
+# posted far more than expected in the window).
+max_results_per_channel = 25
+
+# Prefix used for the weekly digest email subject.
+subject_prefix = Weekly YouTube Digest
+
+# File to write logs to.
+log_file = logs/weekly.log
+
+# Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+log_level = INFO
