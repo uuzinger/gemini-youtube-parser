@@ -40,6 +40,7 @@ temperature = 0.7
 executive_max_output_tokens = 1024
 detailed_max_output_tokens = 8192
 quotes_max_output_tokens = 2048
+weekly_threads_max_output_tokens = 4096
 request_timeout = 300
 
 # Must match the context size configured when llama-server starts.
@@ -84,6 +85,27 @@ prompt_key_quotes =
   Each quote should be on its own line and enclosed in quotation marks.
   Do not add any extra commentary.
   TRANSCRIPT:
+  {transcript}
+
+# Used only by the weekly digest (weekly_summary.py) to build a single
+# "Threads of the Week" overview synthesized across ALL of a recipient's
+# videos for the week. {transcript} receives the concatenated transcripts
+# of every video, each preceded by a "## Title — Channel" header.
+prompt_weekly_threads =
+  Based on the following transcripts from multiple videos published this week, identify the
+  overarching threads that connect them. Do not summarize each video individually; instead,
+  synthesize across all of them.
+  Structure your response in markdown with exactly these four sections, in this order:
+  ### Topics
+  A bullet list of the general topics discussed across the videos this week.
+  ### Positions
+  A bullet list of notable positions, opinions, or stances taken by speakers, noting who holds them.
+  ### Concepts
+  A bullet list of key concepts, terms, or frameworks introduced or discussed.
+  ### Conversation Threads
+  A numbered list of the distinct threads of conversation that ran across one or more videos this
+  week, with a brief description of each.
+  TRANSCRIPTS:
   {transcript}
 
 # (Optional) Configure content safety settings for Gemini.

@@ -61,6 +61,50 @@ async def test_weekly_digest_sent_to_single_recipient(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_weekly_digest_includes_threads_overview_before_videos(
+    monkeypatch,
+) -> None:
+    send = AsyncMock()
+    monkeypatch.setattr("services.email.aiosmtplib.send", send)
+    service = EmailService(_config())
+    entries = [_entry("v1", "First Video", "2026-07-06T00:00:00Z")]
+
+    sent = await service.send_weekly_digest(
+        ["recipient@example.com"],
+        "Weekly YouTube Digest (1 video(s))",
+        entries,
+        overview="### Topics\n- AI safety\n- Robotics",
+    )
+
+    assert sent is True
+    message = send.await_args.args[0]
+    body = message.get_payload()[0].get_payload(decode=True).decode("utf-8")
+    assert "Threads of the Week" in body
+    assert "AI safety" in body
+    # Overview must render before the per-video sections.
+    assert body.index("Threads of the Week") < body.index("First Video")
+
+
+@pytest.mark.asyncio
+async def test_weekly_digest_omits_threads_overview_when_not_provided(
+    monkeypatch,
+) -> None:
+    send = AsyncMock()
+    monkeypatch.setattr("services.email.aiosmtplib.send", send)
+    service = EmailService(_config())
+    entries = [_entry("v1", "First Video", "2026-07-06T00:00:00Z")]
+
+    sent = await service.send_weekly_digest(
+        ["recipient@example.com"], "Subject", entries
+    )
+
+    assert sent is True
+    message = send.await_args.args[0]
+    body = message.get_payload()[0].get_payload(decode=True).decode("utf-8")
+    assert "Threads of the Week" not in body
+
+
+@pytest.mark.asyncio
 async def test_weekly_digest_not_sent_during_dry_run(monkeypatch) -> None:
     send = AsyncMock()
     monkeypatch.setattr("services.email.aiosmtplib.send", send)

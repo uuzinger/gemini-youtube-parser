@@ -117,6 +117,7 @@ def validate_config(config: Config) -> list[str]:
         config.llm_executive_max_output_tokens,
         config.llm_detailed_max_output_tokens,
         config.llm_quotes_max_output_tokens,
+        config.llm_weekly_threads_max_output_tokens,
     )
     if any(limit < 1 for limit in output_limits):
         errors.append("LLM output token limits must be greater than 0")
@@ -160,6 +161,9 @@ def load_config(config_path: str = "config.ini") -> Config:
         ).strip(),
         prompt_key_quotes=parser.get(
             "GEMINI", "prompt_key_quotes", fallback=""
+        ).strip(),
+        prompt_weekly_threads=parser.get(
+            "GEMINI", "prompt_weekly_threads", fallback=""
         ).strip(),
         safety_settings=safety_settings,
         smtp_server=parser.get("EMAIL", "smtp_server", fallback=""),
@@ -230,6 +234,15 @@ def load_config(config_path: str = "config.ini") -> Config:
                 legacy_max_output_tokens
                 if legacy_max_output_tokens is not None
                 else 2048
+            ),
+        ),
+        llm_weekly_threads_max_output_tokens=parser.getint(
+            "LLM",
+            "weekly_threads_max_output_tokens",
+            fallback=(
+                legacy_max_output_tokens
+                if legacy_max_output_tokens is not None
+                else 4096
             ),
         ),
         llm_request_timeout=parser.getfloat(

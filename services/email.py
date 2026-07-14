@@ -73,8 +73,14 @@ class EmailService:
         recipients: list[str],
         subject: str,
         entries: list[WeeklyVideoEntry],
+        overview: str | None = None,
     ) -> bool:
-        """Send one consolidated weekly digest covering multiple videos."""
+        """Send one consolidated weekly digest covering multiple videos.
+
+        `overview` is an optional "Threads of the Week" summary, synthesized
+        across all of the recipient's videos for the week, rendered above the
+        per-video sections.
+        """
         if not recipients:
             logger.warning(
                 "No recipients for weekly digest '%s'. Skipping.", subject
@@ -85,6 +91,13 @@ class EmailService:
                 "No videos to report for weekly digest '%s'. Skipping.", subject
             )
             return False
+
+        overview_html = ""
+        if overview:
+            overview_html = (
+                "<h2>Threads of the Week</h2>"
+                f"<div>{markdown.markdown(overview)}</div><hr>"
+            )
 
         sections = []
         for entry in entries:
@@ -108,8 +121,10 @@ class EmailService:
 
         body_html = (
             "<html><body>"
-            f"<p>Here is your weekly digest of {len(entries)} video(s), "
-            "in chronological order:</p>"
+            f"<p>Here is your weekly digest of {len(entries)} video(s). "
+            "Below is an overview of the week's threads, followed by each "
+            "video in chronological order:</p>"
+            f"{overview_html}"
             f"{''.join(sections)}"
             "</body></html>"
         )

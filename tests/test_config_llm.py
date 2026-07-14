@@ -31,6 +31,7 @@ temperature = 0.6
 executive_max_output_tokens = 1024
 detailed_max_output_tokens = 8192
 quotes_max_output_tokens = 2048
+weekly_threads_max_output_tokens = 4096
 request_timeout = 600
 context_tokens = 262144
 """,
@@ -48,6 +49,7 @@ context_tokens = 262144
     assert config.llm_executive_max_output_tokens == 1024
     assert config.llm_detailed_max_output_tokens == 8192
     assert config.llm_quotes_max_output_tokens == 2048
+    assert config.llm_weekly_threads_max_output_tokens == 4096
     assert config.llm_request_timeout == 600
     assert config.llm_context_tokens == 262144
     assert config.gemini_api_key == ""
@@ -133,3 +135,4 @@ max_output_tokens = 4096
     assert config.llm_executive_max_output_tokens == 4096
     assert config.llm_detailed_max_output_tokens == 4096
     assert config.llm_quotes_max_output_tokens == 4096
+    assert config.llm_weekly_threads_max_output_tokens == 4096

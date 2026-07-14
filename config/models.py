@@ -42,6 +42,7 @@ class WeeklyVideoEntry:
     duration: str
     exec_summary: str
     detailed_summary: str
+    transcript: str = ""
 
 
 @dataclass
@@ -53,6 +54,7 @@ class Config:
     prompt_exec_summary: str
     prompt_detailed_summary: str
     prompt_key_quotes: str
+    prompt_weekly_threads: str
     safety_settings: list[dict[str, str]] | None
     smtp_server: str
     smtp_port: int
@@ -84,5 +86,6 @@ class Config:
     llm_executive_max_output_tokens: int = 1024
     llm_detailed_max_output_tokens: int = 8192
     llm_quotes_max_output_tokens: int = 2048
+    llm_weekly_threads_max_output_tokens: int = 4096
     llm_request_timeout: float = 300.0
     llm_context_tokens: int = 262144

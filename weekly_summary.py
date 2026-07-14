@@ -35,6 +35,10 @@ from utils.helpers import format_duration_seconds, parse_iso8601_duration
 
 logger = logging.getLogger(__name__)
 
+_CHARS_PER_TOKEN = 4
+"""Rough heuristic used only to budget the weekly threads prompt against the
+configured context window; not an exact tokenizer."""
+
 
 async def _summarize_video(
     config: Config,
@@ -94,7 +98,95 @@ async def _summarize_video(
         duration=duration_str,
         exec_summary=exec_summary,
         detailed_summary=detailed_summary,
+        transcript=transcript,
     )
+
+
+def _build_combined_transcript(
+    entries: list[WeeklyVideoEntry],
+    config: Config,
+    report: RunReport,
+) -> str:
+    """Concatenate this recipient's transcripts for the threads-of-the-week prompt.
+
+    Truncates proportionally (with a logged/reported warning) if the combined
+    text would not fit the model's context window alongside the prompt and
+    the requested output length.
+    """
+    sections = [
+        f"## {entry.video.title} — {entry.channel_name}\n{entry.transcript}"
+        for entry in entries
+        if entry.transcript
+    ]
+    combined = "\n\n".join(sections)
+    if not combined:
+        return ""
+
+    prompt_overhead_chars = len(config.prompt_weekly_threads) * _CHARS_PER_TOKEN
+    output_budget_chars = (
+        config.llm_weekly_threads_max_output_tokens * _CHARS_PER_TOKEN
+    )
+    budget_chars = max(
+        0,
+        (config.llm_context_tokens * _CHARS_PER_TOKEN)
+        - prompt_overhead_chars
+        - output_budget_chars,
+    )
+
+    if budget_chars and len(combined) > budget_chars:
+        logger.warning(
+            "Weekly threads transcripts (%d chars) exceed the estimated budget "
+            "(%d chars); truncating proportionally.",
+            len(combined),
+            budget_chars,
+        )
+        report.add_service_issue(
+            "Weekly threads overview: combined transcripts were truncated to "
+            "fit the model's context window."
+        )
+        ratio = budget_chars / len(combined)
+        sections = [
+            section[: max(1, int(len(section) * ratio))] for section in sections
+        ]
+        combined = "\n\n".join(sections)
+
+    return combined
+
+
+async def _build_threads_overview(
+    config: Config,
+    summarizer: SummarizerBackend,
+    llm_limiter: RateLimiter,
+    entries: list[WeeklyVideoEntry],
+    report: RunReport,
+) -> str | None:
+    """Synthesize one cross-video "Threads of the Week" overview for a recipient."""
+    if not config.prompt_weekly_threads or not entries:
+        return None
+
+    combined_transcript = _build_combined_transcript(entries, config, report)
+    if not combined_transcript:
+        return None
+
+    await llm_limiter.acquire()
+
+    try:
+        overview = await summarizer.generate_summary(
+            combined_transcript,
+            config.prompt_weekly_threads,
+            max_output_tokens=config.llm_weekly_threads_max_output_tokens,
+        )
+    finally:
+        for issue in summarizer.drain_alert_events():
+            report.add_service_issue(issue)
+
+    if not overview or overview.startswith("Error:"):
+        report.add_service_issue(
+            "Weekly threads overview generation failed; digest will omit it."
+        )
+        return None
+
+    return overview
 
 
 async def run_weekly_summary(
@@ -188,8 +280,13 @@ async def run_weekly_summary(
 
     for email, entries in entries_by_email.items():
         entries.sort(key=lambda e: e.video.published_at)
+        overview = await _build_threads_overview(
+            config, summarizer, llm_limiter, entries, report
+        )
         subject = f"{weekly_config.subject_prefix} ({len(entries)} video(s))"
-        await email_service.send_weekly_digest([email], subject, entries)
+        await email_service.send_weekly_digest(
+            [email], subject, entries, overview=overview
+        )
 
     logger.info(
         "--- Weekly summary finished. Summarized %d video(s) across %d recipient(s). ---",
