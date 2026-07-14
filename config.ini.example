@@ -120,6 +120,15 @@ log_level = INFO
 dry_run = False
 
 
+[ALERTS]
+# Send one consolidated problem report to default_recipients when a run has
+# failed videos, Gemini model/quota issues, or a fatal error.
+alerts_enabled = True
+
+# Prefix used for administrative alert email subjects.
+alert_subject_prefix = [YT-Monitor ALERT]
+
+
 [RATE_LIMITS]
 # Request rate limits for external APIs.
 # These help prevent hitting API quotas and get you banned.

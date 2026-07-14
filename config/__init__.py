@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import configparser
 import logging
 
@@ -134,6 +133,14 @@ def load_config(config_path: str = "config.ini") -> Config:
         gemini_rpm=parser.getint("RATE_LIMITS", "gemini_rpm", fallback=1000),
         gemini_rpd=parser.getint("RATE_LIMITS", "gemini_rpd", fallback=1000000),
         dry_run=parser.getboolean("SETTINGS", "dry_run", fallback=False),
+        alerts_enabled=parser.getboolean(
+            "ALERTS", "alerts_enabled", fallback=True
+        ),
+        alert_subject_prefix=parser.get(
+            "ALERTS",
+            "alert_subject_prefix",
+            fallback="[YT-Monitor ALERT]",
+        ).strip(),
     )
 
     errors = validate_config(config)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 
 @dataclass
@@ -48,3 +47,5 @@ class Config:
     gemini_rpm: int = 1000
     gemini_rpd: int = 1000000
     dry_run: bool = False
+    alerts_enabled: bool = True
+    alert_subject_prefix: str = "[YT-Monitor ALERT]"

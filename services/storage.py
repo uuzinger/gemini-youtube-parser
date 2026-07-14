@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+from datetime import datetime, timezone
 
 import aiofiles
 
@@ -124,23 +125,28 @@ class StorageService:
         # Remove from failed if it was there
         self._failed_videos.pop(video_id, None)
 
-    def mark_failed(self, video_id: str, error: str) -> None:
-        """Mark a video as failed with error message."""
+    def mark_failed(self, video_id: str, error: str) -> int:
+        """Mark a video as failed and return its updated attempt count."""
         if video_id in self._failed_videos:
             self._failed_videos[video_id]["attempt"] += 1
+            self._failed_videos[video_id]["error"] = error
         else:
             self._failed_videos[video_id] = {
                 "attempt": 1,
                 "error": error,
-                "last_attempt": "unknown",
             }
+        self._failed_videos[video_id]["last_attempt"] = datetime.now(
+            timezone.utc
+        ).isoformat()
+        attempt = self._failed_videos[video_id]["attempt"]
         logger.warning(
             "Video %s failed (attempt %d/%d): %s",
             video_id,
-            self._failed_videos[video_id]["attempt"],
+            attempt,
             self.max_retries,
             error,
         )
+        return attempt
 
     async def save_summary(
         self,

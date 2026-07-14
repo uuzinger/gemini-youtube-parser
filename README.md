@@ -17,6 +17,7 @@ The application performs the following actions:
 6.  **Saves Locally:** Stores generated summaries in text files within a configurable output directory. Tracks processed videos in `processed_videos.json`.
 7.  **Sends Email Notifications:** Dispatches formatted HTML emails with summaries to configured recipients.
 8.  **Channel-Specific Recipients:** Supports per-channel email routing with a default fallback list.
+9.  **Proactive Problem Alerts:** Sends one consolidated run-health email to `default_recipients` when videos fail, Gemini quotas change, a model becomes unavailable, or the run crashes.
 
 ## Features
 
@@ -26,6 +27,7 @@ The application performs the following actions:
 *   Automatic retry with exponential backoff for Gemini API calls.
 *   Circuit breaker pattern to prevent cascading failures.
 *   Model availability validation with automatic suggestions when models are deprecated.
+*   Problem-only administrative alerts with model and quota diagnostics.
 *   Structured logging with file rotation.
 *   Custom exception hierarchy for robust error handling.
 *   Dry run mode for testing email notifications without sending.
@@ -106,6 +108,79 @@ gemini-youtube-parser/
     chmod +x run.sh
     ```
 
+## Upgrading from the Previous Version
+
+Use these steps when upgrading an existing installation that already has a
+production `config.ini`, processed-video state, and scheduled job.
+
+1.  **Back up local state before pulling:**
+    ```bash
+    cp config.ini config.ini.backup
+    cp processed_videos.json processed_videos.json.backup 2>/dev/null || true
+    cp failed_videos.json failed_videos.json.backup 2>/dev/null || true
+    git pull --ff-only
+    ```
+    Do not replace your existing `config.ini` with `config.ini.example`; the
+    existing file contains your credentials and production settings.
+
+2.  **Refresh the virtual environment dependencies:**
+    ```bash
+    .venv/bin/python -m pip install -r requirements.txt
+    ```
+    If the virtual environment references a Python version that is no longer
+    installed, recreate it:
+    ```bash
+    rm -rf .venv
+    python3 -m venv .venv
+    .venv/bin/python -m pip install -r requirements.txt
+    ```
+
+3.  **Optionally add the new alert configuration:**
+    ```ini
+    [ALERTS]
+    alerts_enabled = True
+    alert_subject_prefix = [YT-Monitor ALERT]
+    ```
+    This section is optional. Alerts default to enabled when it is absent.
+    Administrative alerts are sent to
+    `[CHANNEL_RECIPIENTS] default_recipients`; channel-specific recipients do
+    not receive administrative alerts.
+
+4.  **Verify email prerequisites:** Ensure `default_recipients` is populated
+    and the existing `[EMAIL]` SMTP settings are valid. `dry_run = True`
+    suppresses both summary emails and administrative alert emails.
+
+5.  **Review the configured Gemini model:** Compare `[GEMINI] model_name` with
+    the models available to your API key. The application now checks the live
+    Gemini model list on every run. If the configured model is unavailable,
+    the alert includes a suggested replacement and up to 20 available
+    text-generation models. It never changes `config.ini` automatically.
+
+6.  **Review Gemini quota settings:** Set `gemini_rpm` and `gemini_rpd` to
+    values appropriate for your current Google plan. Each processed video
+    normally makes three Gemini generation requests, and startup model
+    validation makes an additional request. Google does not expose your
+    account's quota limits through the model-list API, so quota changes are
+    detected and reported when Gemini returns HTTP 429.
+
+7.  **Run once manually before re-enabling the scheduler:**
+    ```bash
+    ./run.sh
+    echo "exit code: $?"
+    ```
+    Review `logs/monitor.log` and confirm that normal summary email delivery
+    still works. Fatal runtime errors now return a non-zero exit code.
+
+8.  **Optional developer verification:**
+    ```bash
+    .venv/bin/python -m pip install -r requirements-dev.txt
+    .venv/bin/python -m pytest -q
+    ```
+
+The upgrade preserves `processed_videos.json`, `failed_videos.json`, and saved
+summaries. `config.ini` is now ignored by Git to reduce the risk of committing
+API keys or SMTP credentials.
+
 ## Usage
 
 ### Manual Execution
@@ -148,6 +223,12 @@ Controls API request rates to avoid hitting quotas:
 | `log_level` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) |
 | `dry_run` | `False` | If True, logs email content instead of sending |
 
+### `[ALERTS]`
+
+`alerts_enabled` defaults to `True` and controls consolidated problem emails.
+`alert_subject_prefix` defaults to `[YT-Monitor ALERT]`. Alerts go only to
+`default_recipients` and are sent once at the end of a problematic run.
+
 ## Model Validation
 
 When the configured Gemini model is unavailable (deprecated or restricted), the application:
@@ -155,9 +236,12 @@ When the configured Gemini model is unavailable (deprecated or restricted), the 
 1.  Detects the issue at startup and during processing.
 2.  Lists available models and suggests the best alternative.
 3.  Writes a `.model_suggestion` file with details.
-4.  Prints a warning on subsequent runs via `run.py`/`run.sh`.
+4.  Includes the model issue and available alternatives in the administrative alert.
 
-The `.model_suggestion` file is cleared after a successful run. Update `config.ini` `[GEMINI] model_name` with the suggested value.
+The `.model_suggestion` file is cleared after the configured model is
+successfully found in Gemini's current model list. Update `config.ini`
+`[GEMINI] model_name` with an available model; the application does not switch
+models automatically.
 
 ## Error Handling
 
@@ -167,6 +251,13 @@ The application uses a layered error handling approach:
 *   **Circuit breaker:** After 5 consecutive failures, Gemini calls are temporarily skipped.
 *   **Rate limiting:** Sliding window trackers enforce per-minute and per-day limits.
 *   **Custom exceptions:** Specific exception types (`ModelNotFoundError`, `RateLimitExceeded`, etc.) for targeted handling.
+*   **Administrative alerts:** Failed videos, exhausted retries, model drift, quota errors, circuit-breaker events, and fatal crashes are consolidated into one email to `default_recipients`.
+*   **Exit status:** Fatal configuration and runtime failures return a non-zero process exit code.
+
+Alerts can only be sent after configuration and SMTP settings load
+successfully. Failures that prevent Python from starting (for example, a
+missing virtual environment, a stopped scheduler, or an offline host) require
+external monitoring or a heartbeat service.
 
 ## Logging
 

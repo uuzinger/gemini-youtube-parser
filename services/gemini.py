@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 
 from google import genai
 from google.genai import types
@@ -37,10 +36,9 @@ def _dynamic_wait(retry_state):
         delay = _parse_retry_delay(error)
         if delay:
             logger.debug(
-                "Gemini requested wait of %.1fs (retry %d/%d)",
+                "Gemini requested wait of %.1fs (retry %d)",
                 delay,
                 retry_state.attempt_number,
-                retry_state.statistics.attempt_number + 2,
             )
             return wait_fixed(delay)(retry_state)
     return wait_exponential(multiplier=1, min=5, max=60)(retry_state)
@@ -54,6 +52,7 @@ class GeminiService:
         self.client = genai.Client(api_key=config.gemini_api_key)
         self._consecutive_failures = 0
         self._circuit_breaker_threshold = 5
+        self._alert_events: list[str] = []
         self._safety_settings = (
             [
                 types.SafetySetting(
@@ -66,11 +65,38 @@ class GeminiService:
             else None
         )
 
+    def _record_alert_event(self, issue: str) -> None:
+        if issue and issue not in self._alert_events:
+            self._alert_events.append(issue)
+
+    def _record_api_issue(self, error: genai.errors.APIError) -> None:
+        message = " ".join(
+            str(getattr(error, "message", None) or error).split()
+        )
+        label = (
+            "Gemini quota/rate limit"
+            if error.code == 429
+            else "Gemini API error"
+        )
+        issue = f"{label} ({error.code}): {message[:500]}"
+        self._record_alert_event(issue)
+
+    def drain_alert_events(self) -> list[str]:
+        """Return and clear API issues collected since the last drain."""
+        events = self._alert_events.copy()
+        self._alert_events.clear()
+        return events
+
     async def generate_summary(
         self, transcript: str, prompt: str
     ) -> str:
         """Generate a summary using Gemini with retry logic."""
         if self._consecutive_failures >= self._circuit_breaker_threshold:
+            issue = (
+                "Gemini circuit breaker is open after "
+                f"{self._circuit_breaker_threshold} consecutive failures."
+            )
+            self._record_alert_event(issue)
             logger.error(
                 "Circuit breaker open (%d consecutive failures). Skipping Gemini call.",
                 self._circuit_breaker_threshold,
@@ -89,6 +115,8 @@ class GeminiService:
         except ModelNotFoundError:
             raise
         except Exception as e:
+            if isinstance(e, genai.errors.APIError):
+                self._record_api_issue(e)
             self._consecutive_failures += 1
             logger.error(
                 "Gemini generation failed (failure %d/%d): %s",
@@ -97,6 +125,11 @@ class GeminiService:
                 e,
             )
             if self._consecutive_failures >= self._circuit_breaker_threshold:
+                issue = (
+                    "Gemini circuit breaker tripped after "
+                    f"{self._circuit_breaker_threshold} consecutive failures."
+                )
+                self._record_alert_event(issue)
                 logger.critical(
                     "Circuit breaker tripped after %d consecutive failures.",
                     self._circuit_breaker_threshold,
@@ -131,7 +164,7 @@ class GeminiService:
     async def validate_model_early(self) -> str | None:
         """Validate model is available before processing videos."""
         try:
-            result = await self.client.aio.models.generate_content(
+            await self.client.aio.models.generate_content(
                 model=self.config.gemini_model,
                 contents="Say 'ok' in one word.",
                 config=types.GenerateContentConfig(
@@ -152,6 +185,7 @@ class GeminiService:
                 raise ModelNotFoundError(
                     self.config.gemini_model
                 ) from e
+            self._record_api_issue(e)
             logger.warning(
                 "Model validation failed with %s: %s. Model may still work for longer prompts.",
                 e.code,
@@ -159,5 +193,8 @@ class GeminiService:
             )
             return None
         except Exception as e:
+            self._record_alert_event(
+                f"Gemini model validation failed: {type(e).__name__}: {e}"
+            )
             logger.warning("Model validation failed: %s. Continuing anyway.", e)
             return None

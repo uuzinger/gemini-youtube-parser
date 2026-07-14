@@ -20,6 +20,54 @@ class EmailService:
     def __init__(self, config: Config):
         self.config = config
 
+    async def send_admin_alert(self, subject: str, body: str) -> bool:
+        """Send a problem report to the default recipients."""
+        if not self.config.alerts_enabled:
+            logger.info("Administrative alerts are disabled.")
+            return False
+        if not self.config.default_recipients:
+            logger.error(
+                "Cannot send administrative alert: no default recipients configured."
+            )
+            return False
+
+        safe_prefix = self.config.alert_subject_prefix.replace("\r", " ").replace(
+            "\n", " "
+        )
+        safe_subject = subject.replace("\r", " ").replace("\n", " ")
+        full_subject = f"{safe_prefix} {safe_subject}".strip()
+
+        if self.config.dry_run:
+            logger.warning(
+                "DRY RUN - Administrative alert not sent. Subject: %s\n%s",
+                full_subject,
+                body,
+            )
+            return False
+
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["From"] = self.config.sender_email
+        msg["To"] = ", ".join(self.config.default_recipients)
+        msg["Subject"] = full_subject
+
+        try:
+            await aiosmtplib.send(
+                msg,
+                hostname=self.config.smtp_server,
+                port=self.config.smtp_port,
+                username=self.config.smtp_user,
+                password=self.config.smtp_password,
+                start_tls=True,
+            )
+            logger.info(
+                "Administrative alert sent to %s.",
+                self.config.default_recipients,
+            )
+            return True
+        except Exception:
+            logger.exception("Failed to send administrative alert.")
+            return False
+
     async def send_notification(
         self,
         channel_name: str,
