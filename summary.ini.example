@@ -23,14 +23,21 @@ Veritasium = UCHnyfMqiRRG1u-2pPa9-8AQ
 # All channels for the same recipient are combined into ONE weekly email,
 # with videos from every channel listed in chronological order.
 
-# (Optional) Fallback recipients used for any channel above with no
-# channel-specific entry below.
-default_recipients = your.email@example.com
+# default_recipients: comma-separated fallback address(es) used for ANY
+# channel listed in [CHANNELS] above that has no channel-specific entry
+# below. The key is always the literal string "default_recipients", not
+# a ChannelID. This is the only syntax where the key is not a ChannelID.
+default_recipients = your.email@example.com, another.person@example.com
 
-# The key MUST be the ChannelID. Comma-separate multiple emails.
+# Channel-specific entries: the key MUST be the ChannelID (not the comment
+# used in [CHANNELS]), and comma-separate multiple emails. A channel-specific
+# entry here completely replaces default_recipients for that channel; it is
+# not combined with it.
 UCEsQn_1b9gWn4e4v1i0zV3A = a16z-fan-group@example.com
 UCSsHebO0_wpmK1wIYOw_6GA = lex-updates@example.com, another-lex-fan@example.com
-UCHnyfMqiRRG1u-2pPa9-8AQ = your.email@example.com
+
+# Veritasium (UCHnyfMqiRRG1u-2pPa9-8AQ) has no entry above, so its videos
+# fall back to default_recipients.
 
 
 [SETTINGS]
