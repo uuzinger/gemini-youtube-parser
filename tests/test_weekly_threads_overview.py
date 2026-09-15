@@ -24,8 +24,7 @@ def _entry(video_id: str, title: str, transcript: str) -> WeeklyVideoEntry:
         channel_name="Example Channel",
         video=Video(id=video_id, title=title, channel_id="UCxxxx"),
         duration="10:00",
-        exec_summary="Exec summary",
-        detailed_summary="Detailed summary",
+        summary="Single-pass summary",
         transcript=transcript,
     )
 

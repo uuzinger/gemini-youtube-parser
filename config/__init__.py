@@ -114,9 +114,7 @@ def validate_config(config: Config) -> list[str]:
         if config.llm_context_tokens < 1:
             errors.append("LLM context_tokens must be greater than 0")
     output_limits = (
-        config.llm_executive_max_output_tokens,
-        config.llm_detailed_max_output_tokens,
-        config.llm_quotes_max_output_tokens,
+        config.llm_summary_max_output_tokens,
         config.llm_weekly_threads_max_output_tokens,
     )
     if any(limit < 1 for limit in output_limits):
@@ -147,21 +145,37 @@ def load_config(config_path: str = "config.ini") -> Config:
     legacy_max_output_tokens = parser.getint(
         "LLM", "max_output_tokens", fallback=None
     )
+    summary_max_output_tokens = parser.getint(
+        "LLM", "summary_max_output_tokens", fallback=None
+    )
+    if summary_max_output_tokens is None:
+        summary_max_output_tokens = parser.getint(
+            "LLM", "executive_max_output_tokens", fallback=None
+        )
+    if summary_max_output_tokens is None:
+        summary_max_output_tokens = (
+            legacy_max_output_tokens
+            if legacy_max_output_tokens is not None
+            else 1024
+        )
+
+    prompt_summary = parser.get("GEMINI", "prompt_summary", fallback="").strip()
+    if not prompt_summary:
+        prompt_summary = parser.get(
+            "GEMINI", "prompt_executive_summary", fallback=""
+        ).strip()
+        if prompt_summary:
+            logger.warning(
+                "prompt_summary is unset; using prompt_executive_summary. "
+                "Update [GEMINI] prompt_summary to the single-pass prompt."
+            )
 
     config = Config(
         youtube_api_key=parser.get("API_KEYS", "youtube_api_key", fallback=""),
         gemini_api_key=parser.get("API_KEYS", "gemini_api_key", fallback=""),
         channel_ids=channel_ids,
         gemini_model=parser.get("GEMINI", "model_name", fallback="gemini-2.5-flash"),
-        prompt_exec_summary=parser.get(
-            "GEMINI", "prompt_executive_summary", fallback=""
-        ).strip(),
-        prompt_detailed_summary=parser.get(
-            "GEMINI", "prompt_detailed_summary", fallback=""
-        ).strip(),
-        prompt_key_quotes=parser.get(
-            "GEMINI", "prompt_key_quotes", fallback=""
-        ).strip(),
+        prompt_summary=prompt_summary,
         prompt_weekly_threads=parser.get(
             "GEMINI", "prompt_weekly_threads", fallback=""
         ).strip(),
@@ -209,33 +223,7 @@ def load_config(config_path: str = "config.ini") -> Config:
         llm_temperature=parser.getfloat(
             "LLM", "temperature", fallback=0.7
         ),
-        llm_executive_max_output_tokens=parser.getint(
-            "LLM",
-            "executive_max_output_tokens",
-            fallback=(
-                legacy_max_output_tokens
-                if legacy_max_output_tokens is not None
-                else 1024
-            ),
-        ),
-        llm_detailed_max_output_tokens=parser.getint(
-            "LLM",
-            "detailed_max_output_tokens",
-            fallback=(
-                legacy_max_output_tokens
-                if legacy_max_output_tokens is not None
-                else 8192
-            ),
-        ),
-        llm_quotes_max_output_tokens=parser.getint(
-            "LLM",
-            "quotes_max_output_tokens",
-            fallback=(
-                legacy_max_output_tokens
-                if legacy_max_output_tokens is not None
-                else 2048
-            ),
-        ),
+        llm_summary_max_output_tokens=summary_max_output_tokens,
         llm_weekly_threads_max_output_tokens=parser.getint(
             "LLM",
             "weekly_threads_max_output_tokens",

@@ -30,8 +30,7 @@ def _entry(video_id: str, title: str, published_at: str) -> WeeklyVideoEntry:
             published_at=published_at,
         ),
         duration="10:00",
-        exec_summary="Exec summary text",
-        detailed_summary="- Detailed bullet one\n- Detailed bullet two",
+        summary="Exec summary text\n- Detailed bullet one\n- Detailed bullet two",
     )
 
 
@@ -58,6 +57,8 @@ async def test_weekly_digest_sent_to_single_recipient(monkeypatch) -> None:
     assert "Second Video" in body
     # Videos should appear in the order passed in (chronological).
     assert body.index("First Video") < body.index("Second Video")
+    assert "Exec summary text" in body
+    assert "Executive Summary" not in body
 
 
 @pytest.mark.asyncio

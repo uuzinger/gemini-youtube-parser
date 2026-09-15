@@ -37,9 +37,7 @@ model_name = qwen3.6-a35b
 
 # Generation and connection defaults for the remote server.
 temperature = 0.7
-executive_max_output_tokens = 1024
-detailed_max_output_tokens = 8192
-quotes_max_output_tokens = 2048
+summary_max_output_tokens = 1024
 weekly_threads_max_output_tokens = 4096
 request_timeout = 300
 
@@ -63,27 +61,20 @@ Veritasium = UCHnyfMqiRRG1u-2pPa9-8AQ
 model_name = gemini-3.1-flash-lite-preview
 
 # --- Prompts for the AI ---
-# These prompts are used by both Gemini and llama.cpp providers.
+# These prompts are used by Gemini and OpenAI-compatible providers.
 # Use {transcript} as the placeholder for the video transcript.
 
-prompt_executive_summary =
-  Based on the following transcript, please provide a concise, one-paragraph executive summary.
-  Focus on the main topic, key arguments, and the overall conclusion of the video.
-  The summary should be easy to understand for someone who has not seen the video.
-  TRANSCRIPT:
-  {transcript}
-
-prompt_detailed_summary =
-  Based on the following transcript, create a detailed, multi-point summary using markdown bullet points.
-  Extract the most important topics, discussions, and findings.
-  For each point, provide a brief but informative description.
-  TRANSCRIPT:
-  {transcript}
-
-prompt_key_quotes =
-  From the following transcript, extract 3-5 of the most impactful and representative direct quotes.
-  Each quote should be on its own line and enclosed in quotation marks.
-  Do not add any extra commentary.
+prompt_summary =
+  You are summarizing a podcast/video transcript. Produce a concise summary, not an exhaustive one. Follow this exact structure:
+  1. TL;DR (2-3 sentences max): What is this conversation fundamentally about, and what's the core takeaway?
+  2. Key Points (8-12 bullets max, no sub-bullets): The main ideas, arguments, or claims discussed — one bullet per idea, not per detail. Each bullet should be 1-2 sentences. Skip anecdotes, examples, and side tangents unless they ARE the point being made.
+  3. Notable Quotes or Moments (0-3, optional): Only include if something genuinely striking, quotable, or surprising was said.
+  Hard constraints:
+  - Total output must be under 300 words.
+  - Do not create a new heading or bullet for every topic shift in the conversation — group related sub-discussions into a single bullet.
+  - Do not narrate the structure of the conversation ("they discussed X, then moved to Y, then Rogan asked about Z"). Report conclusions and ideas, not the sequence of the conversation.
+  - No nested bullets. If you need three levels of hierarchy, you're being too detailed — collapse it.
+  - Prioritize the 20% of content that carries 80% of the meaning. It's fine — expected — to drop minor tangents, personal anecdotes, and repeated points entirely.
   TRANSCRIPT:
   {transcript}
 

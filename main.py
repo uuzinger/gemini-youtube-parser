@@ -135,30 +135,11 @@ async def process_video(
         )
         return
 
-    # Generate all three summaries in parallel
     try:
-        exec_summary, detailed_summary, key_quotes = (
-            await asyncio.gather(
-                summarizer.generate_summary(
-                    transcript,
-                    config.prompt_exec_summary,
-                    max_output_tokens=(
-                        config.llm_executive_max_output_tokens
-                    ),
-                ),
-                summarizer.generate_summary(
-                    transcript,
-                    config.prompt_detailed_summary,
-                    max_output_tokens=(
-                        config.llm_detailed_max_output_tokens
-                    ),
-                ),
-                summarizer.generate_summary(
-                    transcript,
-                    config.prompt_key_quotes,
-                    max_output_tokens=config.llm_quotes_max_output_tokens,
-                ),
-            )
+        summary = await summarizer.generate_summary(
+            transcript,
+            config.prompt_summary,
+            max_output_tokens=config.llm_summary_max_output_tokens,
         )
     except ModelNotFoundError as e:
         error_msg = f"Model not found: {e}"
@@ -175,10 +156,7 @@ async def process_video(
         for issue in summarizer.drain_alert_events():
             report.add_service_issue(issue)
 
-    # Check for errors in summaries
-    is_error = any(
-        s.startswith("Error:") for s in [exec_summary, detailed_summary, key_quotes] if s
-    )
+    is_error = bool(summary) and summary.startswith("Error:")
 
     if is_error:
         error_msg = "LLM generation failed"
@@ -198,9 +176,7 @@ async def process_video(
         video_id,
         video.title,
         duration_str,
-        exec_summary,
-        detailed_summary,
-        key_quotes,
+        summary,
     )
 
     # Send email notification
@@ -209,9 +185,7 @@ async def process_video(
             channel_name,
             video,
             duration_str,
-            exec_summary,
-            detailed_summary,
-            key_quotes,
+            summary,
         )
     except Exception as e:
         error_msg = f"Email send failed: {e}"

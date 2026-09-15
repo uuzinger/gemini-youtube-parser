@@ -18,9 +18,7 @@ def _config(**overrides):
         "llm_api_key": "local-example-key",
         "llm_model": "qwen3.6-a35b",
         "llm_temperature": 0.7,
-        "llm_executive_max_output_tokens": 1024,
-        "llm_detailed_max_output_tokens": 8192,
-        "llm_quotes_max_output_tokens": 2048,
+        "llm_summary_max_output_tokens": 1024,
         "llm_request_timeout": 300.0,
         "llm_context_tokens": 262144,
     }
@@ -100,7 +98,7 @@ async def test_likely_context_overflow_is_rejected_before_request() -> None:
     service = OpenAICompatibleService(
         _config(
             llm_context_tokens=10,
-            llm_detailed_max_output_tokens=5,
+            llm_summary_max_output_tokens=5,
         )
     )
     service.client = _chat_client(create)

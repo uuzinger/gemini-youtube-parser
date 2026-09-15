@@ -101,8 +101,7 @@ class EmailService:
 
         sections = []
         for entry in entries:
-            exec_html = markdown.markdown(entry.exec_summary or "")
-            detailed_html = markdown.markdown(entry.detailed_summary or "")
+            summary_html = markdown.markdown(entry.summary or "")
             published = entry.video.published_at.split("T")[0] or "Unknown"
             sections.append(
                 f"""
@@ -113,8 +112,7 @@ class EmailService:
                     <b>Duration:</b> {html.escape(entry.duration)}<br>
                     <b>Link:</b> <a href="https://www.youtube.com/watch?v={entry.video.id}">https://www.youtube.com/watch?v={entry.video.id}</a>
                 </p>
-                <h3>Executive Summary</h3><div>{exec_html}</div>
-                <h3>Detailed Summary</h3><div>{detailed_html}</div>
+                <div>{summary_html}</div>
                 <hr>
                 """
             )
@@ -166,9 +164,7 @@ class EmailService:
         channel_name: str,
         video: Video,
         duration: str,
-        exec_summary: str,
-        detailed_summary: str,
-        key_quotes: str,
+        summary: str,
     ) -> None:
         """Send email notification with video summary."""
         if not self.config.default_recipients:
@@ -204,22 +200,14 @@ class EmailService:
                 logger.info("BCC: %s", ", ".join(bcc_recipients))
             logger.info("Subject: %s", subject)
             logger.info("-" * 80)
-            logger.info("Executive Summary:")
-            logger.info(exec_summary)
-            logger.info("-" * 80)
-            logger.info("Detailed Summary:")
-            logger.info(detailed_summary)
-            logger.info("-" * 80)
-            logger.info("Key Quotes:")
-            logger.info(key_quotes)
+            logger.info("Summary:")
+            logger.info(summary)
             logger.info("-" * 80)
             logger.info("DRY RUN - Email NOT sent (dry run mode)")
             logger.info("=" * 80)
             return
 
-        exec_html = markdown.markdown(exec_summary or "")
-        detailed_html = markdown.markdown(detailed_summary or "")
-        quotes_html = markdown.markdown(key_quotes or "")
+        summary_html = markdown.markdown(summary or "")
 
         body_html = f"""
         <html><body>
@@ -229,9 +217,7 @@ class EmailService:
                 <b>Duration:</b> {html.escape(duration)}<br>
                 <b>Link:</b> <a href="https://www.youtube.com/watch?v={video.id}">https://www.youtube.com/watch?v={video.id}</a>
             </p><hr>
-            <h2>Executive Summary</h2><div>{exec_html}</div><hr>
-            <h2>Detailed Summary</h2><div>{detailed_html}</div><hr>
-            <h2>Key Quotes</h2><div>{quotes_html}</div>
+            <div>{summary_html}</div>
         </body></html>
         """
 
