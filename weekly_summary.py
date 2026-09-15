@@ -2,8 +2,8 @@
 
 Reads summary.ini for the list of channels and their recipients, pulls
 transcripts for videos published in the last N days from each channel, and
-sends each recipient a single consolidated email with every video's title,
-executive summary, and detailed bullets, in chronological order.
+sends each recipient a single consolidated email with every video's title
+and summary, in chronological order.
 
 API credentials (YouTube, LLM, SMTP) are read from config.ini, the same file
 used by the daily monitor (main.py).
@@ -49,7 +49,7 @@ async def _summarize_video(
     duration_str: str,
     report: RunReport,
 ) -> WeeklyVideoEntry | None:
-    """Fetch a transcript and generate the two summaries for one video."""
+    """Fetch a transcript and generate one summary for a video."""
     transcript = get_transcript(video.id)
     if not transcript:
         report.record_video_failure(
@@ -64,25 +64,16 @@ async def _summarize_video(
     await llm_limiter.acquire()
 
     try:
-        exec_summary, detailed_summary = await asyncio.gather(
-            summarizer.generate_summary(
-                transcript,
-                config.prompt_exec_summary,
-                max_output_tokens=config.llm_executive_max_output_tokens,
-            ),
-            summarizer.generate_summary(
-                transcript,
-                config.prompt_detailed_summary,
-                max_output_tokens=config.llm_detailed_max_output_tokens,
-            ),
+        summary = await summarizer.generate_summary(
+            transcript,
+            config.prompt_summary,
+            max_output_tokens=config.llm_summary_max_output_tokens,
         )
     finally:
         for issue in summarizer.drain_alert_events():
             report.add_service_issue(issue)
 
-    if any(
-        s.startswith("Error:") for s in (exec_summary, detailed_summary) if s
-    ):
+    if summary.startswith("Error:"):
         report.record_video_failure(
             video_id=video.id,
             title=video.title,
@@ -96,8 +87,7 @@ async def _summarize_video(
         channel_name=channel_name,
         video=video,
         duration=duration_str,
-        exec_summary=exec_summary,
-        detailed_summary=detailed_summary,
+        summary=summary,
         transcript=transcript,
     )
 

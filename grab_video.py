@@ -58,18 +58,10 @@ async def run(video_id: str, output_dir: str | None = None) -> None:
     duration_s = parse_iso8601_duration(duration_iso)
     duration_str = format_duration_seconds(duration_s)
 
-    # Generate executive summary in parallel with a brief description prompt
-    exec_summary, description = await asyncio.gather(
-        summarizer.generate_summary(
-            transcript,
-            "Based on the following transcript, please provide a concise, one-paragraph executive summary.\nFocus on the main topic, key arguments, and the overall conclusion of the video.\nThe summary should be easy to understand for someone who has not seen the video.\nTRANSCRIPT:\n{transcript}",
-            max_output_tokens=config.llm_executive_max_output_tokens,
-        ),
-        summarizer.generate_summary(
-            description if (description := snippet.get("description", "")) else transcript[:4000],
-            "Provide a concise 2-3 sentence description of this video.\n\n{transcript}",
-            max_output_tokens=config.llm_executive_max_output_tokens,
-        ),
+    summary = await summarizer.generate_summary(
+        transcript,
+        config.prompt_summary,
+        max_output_tokens=config.llm_summary_max_output_tokens,
     )
 
     # Sanitize title for filename
@@ -94,15 +86,9 @@ async def run(video_id: str, output_dir: str | None = None) -> None:
         f.write("=" * 80 + "\n\n")
 
         f.write("=" * 80 + "\n")
-        f.write("EXECUTIVE SUMMARY\n")
+        f.write("SUMMARY\n")
         f.write("=" * 80 + "\n\n")
-        f.write(exec_summary if not exec_summary.startswith("Error:") else exec_summary)
-        f.write("\n\n")
-
-        f.write("=" * 80 + "\n")
-        f.write("DESCRIPTION\n")
-        f.write("=" * 80 + "\n\n")
-        f.write(description if not description.startswith("Error:") else "")
+        f.write(summary)
         f.write("\n\n")
 
         f.write("=" * 80 + "\n")

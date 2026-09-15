@@ -153,9 +153,7 @@ class StorageService:
         video_id: str,
         title: str,
         duration: str,
-        exec_summary: str,
-        detailed_summary: str,
-        key_quotes: str,
+        summary: str,
     ) -> None:
         """Save summary to a local text file."""
         from utils.helpers import sanitize_filename
@@ -175,12 +173,8 @@ class StorageService:
                 f"Video ID: {video_id}\n"
                 f"URL: https://www.youtube.com/watch?v={video_id}\n"
                 f"Duration: {duration}\n\n"
-                f"--- Executive Summary ---\n"
-                f"{exec_summary}\n\n"
-                f"--- Detailed Summary ---\n"
-                f"{detailed_summary}\n\n"
-                f"--- Key Quotes ---\n"
-                f"{key_quotes}\n"
+                f"--- Summary ---\n"
+                f"{summary}\n"
             )
 
             # Replace non-ASCII characters to avoid encoding errors

@@ -114,7 +114,7 @@ class OpenAICompatibleService:
         output_limit = (
             max_output_tokens
             if max_output_tokens is not None
-            else self.config.llm_detailed_max_output_tokens
+            else self.config.llm_summary_max_output_tokens
         )
         estimated_input_tokens = max(1, (len(full_prompt) + 3) // 4)
         estimated_total_tokens = estimated_input_tokens + output_limit

@@ -28,9 +28,7 @@ use_tls = true
 api_key = local-example-key
 model_name = qwen3.6-a35b
 temperature = 0.6
-executive_max_output_tokens = 1024
-detailed_max_output_tokens = 8192
-quotes_max_output_tokens = 2048
+summary_max_output_tokens = 1024
 weekly_threads_max_output_tokens = 4096
 request_timeout = 600
 context_tokens = 262144
@@ -46,9 +44,7 @@ context_tokens = 262144
     assert config.llm_use_tls is True
     assert config.llm_model == "qwen3.6-a35b"
     assert config.llm_temperature == 0.6
-    assert config.llm_executive_max_output_tokens == 1024
-    assert config.llm_detailed_max_output_tokens == 8192
-    assert config.llm_quotes_max_output_tokens == 2048
+    assert config.llm_summary_max_output_tokens == 1024
     assert config.llm_weekly_threads_max_output_tokens == 4096
     assert config.llm_request_timeout == 600
     assert config.llm_context_tokens == 262144
@@ -99,7 +95,7 @@ def test_llm_host_validation_accepts_hosts_but_not_embedded_ports() -> None:
     assert _is_valid_llm_host("llm.internal.example:8080") is False
 
 
-def test_legacy_max_output_tokens_applies_to_all_summary_types(
+def test_legacy_max_output_tokens_applies_to_summary_and_weekly(
     tmp_path,
 ) -> None:
     config_file = tmp_path / "config.ini"
@@ -132,7 +128,103 @@ max_output_tokens = 4096
 
     config = load_config(str(config_file))
 
-    assert config.llm_executive_max_output_tokens == 4096
-    assert config.llm_detailed_max_output_tokens == 4096
-    assert config.llm_quotes_max_output_tokens == 4096
+    assert config.llm_summary_max_output_tokens == 4096
     assert config.llm_weekly_threads_max_output_tokens == 4096
+
+
+def test_loads_prompt_summary(tmp_path) -> None:
+    config_file = tmp_path / "config.ini"
+    config_file.write_text(
+        """
+[API_KEYS]
+youtube_api_key = youtube-example-key
+gemini_api_key = gemini-example-key
+
+[CHANNELS]
+Example = UCaaaaaaaaaaaaaaaaaaaaaa
+
+[EMAIL]
+smtp_server = smtp.example.com
+smtp_user = monitor@example.com
+smtp_password = example-password
+sender_email = monitor@example.com
+
+[CHANNEL_RECIPIENTS]
+default_recipients = admin@example.com
+
+[GEMINI]
+prompt_summary = Single pass {transcript}
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(str(config_file))
+
+    assert config.prompt_summary == "Single pass {transcript}"
+    assert config.llm_summary_max_output_tokens == 1024
+
+
+def test_falls_back_to_executive_prompt(tmp_path) -> None:
+    config_file = tmp_path / "config.ini"
+    config_file.write_text(
+        """
+[API_KEYS]
+youtube_api_key = youtube-example-key
+gemini_api_key = gemini-example-key
+
+[CHANNELS]
+Example = UCaaaaaaaaaaaaaaaaaaaaaa
+
+[EMAIL]
+smtp_server = smtp.example.com
+smtp_user = monitor@example.com
+smtp_password = example-password
+sender_email = monitor@example.com
+
+[CHANNEL_RECIPIENTS]
+default_recipients = admin@example.com
+
+[GEMINI]
+prompt_executive_summary = Legacy exec {transcript}
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(str(config_file))
+
+    assert config.prompt_summary == "Legacy exec {transcript}"
+
+
+def test_summary_max_output_tokens_overrides_legacy(tmp_path) -> None:
+    config_file = tmp_path / "config.ini"
+    config_file.write_text(
+        """
+[API_KEYS]
+youtube_api_key = youtube-example-key
+
+[CHANNELS]
+Example = UCaaaaaaaaaaaaaaaaaaaaaa
+
+[EMAIL]
+smtp_server = smtp.example.com
+smtp_user = monitor@example.com
+smtp_password = example-password
+sender_email = monitor@example.com
+
+[CHANNEL_RECIPIENTS]
+default_recipients = admin@example.com
+
+[LLM]
+provider = llama_cpp
+host = llm.internal.example
+api_key = local-example-key
+model_name = qwen3.6-a35b
+executive_max_output_tokens = 2048
+summary_max_output_tokens = 768
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(str(config_file))
+
+    assert config.llm_summary_max_output_tokens == 768

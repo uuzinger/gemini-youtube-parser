@@ -10,10 +10,7 @@ The application performs the following actions:
 2.  **Detects New Videos:** Identifies videos published within the last 25 hours.
 3.  **Fetches Video Details:** Retrieves video duration and filters by minimum length.
 4.  **Retrieves Transcripts:** Fetches English transcripts for eligible videos.
-5.  **Generates Summaries via Gemini:** Uses the Google Gemini API to create:
-    *   A short executive summary.
-    *   A detailed bulleted summary.
-    *   A list of key quotes.
+5.  **Generates one summary per video:** Uses the configured LLM to produce a single concise summary (TL;DR, key points, and optional notable quotes).
 6.  **Saves Locally:** Stores generated summaries in text files within a configurable output directory. Tracks processed videos in `processed_videos.json`.
 7.  **Sends Email Notifications:** Dispatches formatted HTML emails with summaries to configured recipients.
 8.  **Channel-Specific Recipients:** Supports per-channel email routing with a default fallback list.
@@ -22,7 +19,7 @@ The application performs the following actions:
 
 ## Features
 
-*   Async processing with parallel Gemini API calls (3 summaries generated simultaneously).
+*   One LLM generation request per video (plus a separate weekly threads request in the digest).
 *   Google Gen AI SDK (new `google-genai` package) with async support.
 *   Configurable rate limiting for YouTube and Gemini APIs.
 *   Automatic retry with exponential backoff for Gemini API calls.
@@ -167,32 +164,39 @@ production `config.ini`, processed-video state, and scheduled job.
     api_key = YOUR_LLAMACPP_API_KEY
     model_name = qwen3.6-a35b
     temperature = 0.7
-    executive_max_output_tokens = 1024
-    detailed_max_output_tokens = 8192
-    quotes_max_output_tokens = 2048
+    summary_max_output_tokens = 1024
+    weekly_threads_max_output_tokens = 4096
     request_timeout = 300
     context_tokens = 262144
     ```
     Replace the host, model label, and API key with the values used by your
     server. Do not include `http://`, a port, or `/v1` in `host`.
 
-6.  **If continuing with Gemini, review the configured model:** Compare
+6.  **Switch to the single-pass video prompt:** Copy `prompt_summary` from
+    `config.ini.example` into `[GEMINI]`. Each video now uses one LLM call
+    instead of three. If `prompt_summary` is absent, the old
+    `prompt_executive_summary` is used as a fallback. You can remove
+    `prompt_detailed_summary` and `prompt_key_quotes`. Set
+    `summary_max_output_tokens` (1024 is enough for the 300-word cap);
+    `weekly_threads_max_output_tokens` is unchanged.
+
+7.  **If continuing with Gemini, review the configured model:** Compare
     `[GEMINI] model_name` with the models available to your API key. The
     application checks the live Gemini model list on every run. If the
     configured model is unavailable, the alert includes a suggested
     replacement and up to 20 available text-generation models. It never
     changes `config.ini` automatically.
 
-7.  **Review request-rate settings:** Set `gemini_rpm` and `gemini_rpd` to
+8.  **Review request-rate settings:** Set `gemini_rpm` and `gemini_rpd` to
     values appropriate for your current Google plan. Each processed video
-    normally makes three Gemini generation requests, and startup model
+    makes one generation request, and startup model
     validation makes an additional request. Google does not expose your
     account's quota limits through the model-list API, so quota changes are
     detected and reported when Gemini returns HTTP 429. These legacy setting
     names also limit llama.cpp requests; their high defaults generally require
     no adjustment for a local server.
 
-8.  **Run once manually before re-enabling the scheduler:**
+9.  **Run once manually before re-enabling the scheduler:**
     ```bash
     ./run.sh
     echo "exit code: $?"
@@ -200,7 +204,7 @@ production `config.ini`, processed-video state, and scheduled job.
     Review `logs/monitor.log` and confirm that normal summary email delivery
     still works. Fatal runtime errors now return a non-zero exit code.
 
-9.  **Optional developer verification:**
+10. **Optional developer verification:**
     ```bash
     .venv/bin/python -m pip install -r requirements-dev.txt
     .venv/bin/python -m pytest -q
@@ -255,7 +259,7 @@ combined email covering every video posted across their channels.
 
 2.  **Credentials come from `config.ini`:** `weekly_summary.py` loads
     `config.ini` for the YouTube API key, the configured LLM provider, prompts
-    (`prompt_executive_summary` and `prompt_detailed_summary`), per-summary
+    (`prompt_summary` and `prompt_weekly_threads`), output
     token limits, and SMTP settings. There is nothing else to configure for
     credentials.
 
@@ -311,9 +315,8 @@ use_tls = False
 api_key = replace-with-the-same-api-key
 model_name = qwen3.6-a35b
 temperature = 0.7
-executive_max_output_tokens = 1024
-detailed_max_output_tokens = 8192
-quotes_max_output_tokens = 2048
+summary_max_output_tokens = 1024
+weekly_threads_max_output_tokens = 4096
 request_timeout = 300
 context_tokens = 262144
 ```
@@ -326,13 +329,14 @@ logged as a warning rather than treated as a failure.
 prompt size before sending and reports likely overflow, but this is an
 approximation rather than model-specific tokenization.
 
-The three output limits apply independently to executive summaries, detailed
-summaries, and quote extraction. Increasing a limit does not force the model
-to use all available tokens. If Gemini or llama.cpp reports that generation
-stopped because a limit was reached, the run records a failed summary and
-sends an administrative alert instead of silently emailing truncated output.
-The previous `max_output_tokens` setting is still accepted and applies its
-value to all three summary types.
+`summary_max_output_tokens` caps the single per-video summary. Increasing it
+does not force the model to use all available tokens. If Gemini or llama.cpp
+reports that generation stopped because a limit was reached, the run records
+a failed summary and sends an administrative alert instead of silently
+emailing truncated output. The previous `max_output_tokens` setting is still
+accepted and applies to both the per-video summary and the weekly threads
+overview. Existing `executive_max_output_tokens` values are used as the
+summary cap when `summary_max_output_tokens` is absent.
 
 With `use_tls = False`, the API key and full video transcripts travel as
 unencrypted HTTP. Use this only on a trusted, access-controlled network. For
@@ -438,9 +442,7 @@ In dry run mode, the application will:
 *   Log the full email content to the console and log file, including:
     *   To/From addresses and BCC recipients
     *   Subject line
-    *   Executive Summary
-    *   Detailed Summary
-    *   Key Quotes
+    *   The generated summary
 
 This is useful for testing your configuration and verifying email content before enabling production sends. Set `dry_run = False` when ready for live notifications.
 
