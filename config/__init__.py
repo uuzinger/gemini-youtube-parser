@@ -135,7 +135,13 @@ def validate_config(config: Config) -> list[str]:
 def load_config(config_path: str = "config.ini") -> Config:
     parser = configparser.ConfigParser()
     parser.optionxform = str
-    parser.read(config_path)
+    try:
+        parser.read(config_path, encoding="utf-8")
+    except UnicodeDecodeError as e:
+        raise ValueError(
+            f"{config_path} is not valid UTF-8 (byte {e.start}). "
+            "Re-save it with UTF-8 encoding."
+        ) from e
 
     channel_ids = _parse_channel_ids(parser)
     default_recipients, channel_recipients = _parse_channel_recipients(parser)

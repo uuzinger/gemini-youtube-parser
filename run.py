@@ -69,12 +69,18 @@ if __name__ == "__main__":
     print(f"Executing script: {main_script_path}")
     print(f"Working directory: {script_dir}")
 
+    # Force UTF-8 on the child's streams so piped output is decodable on
+    # systems whose locale encoding is not UTF-8 (e.g. Windows cp1252).
+    child_env = dict(os.environ, PYTHONIOENCODING="utf-8")
+
     try:
         process = subprocess.run(
             [venv_python, main_script_path],
             check=True,
             cwd=script_dir,
             encoding='utf-8',
+            errors='replace',
+            env=child_env,
             stderr=subprocess.PIPE,
             stdout=subprocess.PIPE
         )

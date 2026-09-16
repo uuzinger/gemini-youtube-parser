@@ -1,3 +1,5 @@
+import pytest
+
 from config import _is_valid_llm_host, load_config, validate_config
 
 
@@ -162,6 +164,52 @@ prompt_summary = Single pass {transcript}
 
     assert config.prompt_summary == "Single pass {transcript}"
     assert config.llm_summary_max_output_tokens == 1024
+
+
+def _minimal_config_text(prompt: str) -> str:
+    return f"""
+[API_KEYS]
+youtube_api_key = youtube-example-key
+gemini_api_key = gemini-example-key
+
+[CHANNELS]
+Example = UCaaaaaaaaaaaaaaaaaaaaaa
+
+[EMAIL]
+smtp_server = smtp.example.com
+smtp_user = monitor@example.com
+smtp_password = example-password
+sender_email = monitor@example.com
+
+[CHANNEL_RECIPIENTS]
+default_recipients = admin@example.com
+
+[GEMINI]
+prompt_summary = {prompt}
+"""
+
+
+def test_non_ascii_prompt_is_read_as_utf8(tmp_path) -> None:
+    config_file = tmp_path / "config.ini"
+    config_file.write_bytes(
+        _minimal_config_text("One bullet per idea \u2014 not per detail").encode(
+            "utf-8"
+        )
+    )
+
+    config = load_config(str(config_file))
+
+    assert config.prompt_summary == "One bullet per idea \u2014 not per detail"
+
+
+def test_non_utf8_config_raises_actionable_error(tmp_path) -> None:
+    config_file = tmp_path / "config.ini"
+    config_file.write_bytes(
+        _minimal_config_text("Dash \u2014 here").encode("cp1252")
+    )
+
+    with pytest.raises(ValueError, match="not valid UTF-8"):
+        load_config(str(config_file))
 
 
 def test_falls_back_to_executive_prompt(tmp_path) -> None:

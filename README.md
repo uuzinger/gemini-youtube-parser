@@ -1,36 +1,78 @@
-# YouTube Channel Monitor & Gemini Summarizer
+# YouTube Channel Monitor & Summarizer
 
-A Python application that monitors specified YouTube channels for new video uploads, fetches transcripts, generates AI-powered summaries using Google Gemini, saves them locally, and sends email notifications.
+A Python application that monitors specified YouTube channels for new video
+uploads, fetches transcripts, generates one AI summary per video, saves that
+summary locally, and emails it to configured recipients. The default LLM
+provider is Google Gemini; a remote llama.cpp (OpenAI-compatible) server is
+also supported.
+
+## How a video is processed
+
+Each daily run (`main.py` / `run.sh` / `run.py`) does the following:
+
+1. **Retry previously failed videos**, then scan each configured channel.
+2. **Select candidates.** New videos published in the last 25 hours are
+   considered, up to `max_results_per_channel`. Videos already in
+   `processed_videos.json` or `failed_videos.json` are skipped. Videos shorter
+   than `min_video_duration_minutes` are marked processed and skipped.
+3. **Fetch the English transcript.** If none is available, the video is
+   recorded as failed and retried on a later run.
+4. **Generate one summary in a single LLM call.** The transcript is inserted
+   into `[GEMINI] prompt_summary` (the `{transcript}` placeholder). The model
+   is asked for a concise structure: a 2-3 sentence TL;DR, 8-12 key-point
+   bullets, and 0-3 notable quotes if something is genuinely striking. Total
+   output is capped in the prompt at under 300 words, and in the API by
+   `summary_max_output_tokens` (default 1024). There are no separate
+   executive / detailed / quotes generation passes.
+5. **Save and email.** The markdown summary is written under `output_dir` and
+   sent as one HTML email body. Channel-specific recipients are BCC'd in
+   addition to `default_recipients`.
+6. **Mark processed** on success. LLM errors, missing transcripts, and email
+   failures go into `failed_videos.json` and the end-of-run admin alert.
+
+Videos are processed one at a time, with a short pause between them. Each
+video uses one generation request (plus one extra Gemini model-list /
+validation request at startup when the provider is Gemini).
+
+The weekly digest (`weekly_summary.py`) reuses the same single-pass
+`prompt_summary` for each video, then makes one additional LLM call per
+recipient using `prompt_weekly_threads` to synthesize a "Threads of the Week"
+overview across that recipient's videos.
 
 ## Overview
 
-The application performs the following actions:
-
-1.  **Monitors Multiple Channels:** Checks a list of specified YouTube channel IDs on each run.
-2.  **Detects New Videos:** Identifies videos published within the last 25 hours.
-3.  **Fetches Video Details:** Retrieves video duration and filters by minimum length.
-4.  **Retrieves Transcripts:** Fetches English transcripts for eligible videos.
-5.  **Generates one summary per video:** Uses the configured LLM to produce a single concise summary (TL;DR, key points, and optional notable quotes).
-6.  **Saves Locally:** Stores generated summaries in text files within a configurable output directory. Tracks processed videos in `processed_videos.json`.
-7.  **Sends Email Notifications:** Dispatches formatted HTML emails with summaries to configured recipients.
-8.  **Channel-Specific Recipients:** Supports per-channel email routing with a default fallback list.
-9.  **Proactive Problem Alerts:** Sends one consolidated run-health email to `default_recipients` when videos fail, Gemini quotas change, a model becomes unavailable, or the run crashes.
-10. **Weekly Digest (optional):** A separate script (`weekly_summary.py`) can be scheduled once per week to email each recipient one consolidated digest of every video posted on their channels in the last 7 days, in chronological order.
+1.  **Monitors multiple channels** from `[CHANNELS]` on each run.
+2.  **Detects new videos** published within the last 25 hours.
+3.  **Filters by duration** using `min_video_duration_minutes`.
+4.  **Retrieves English transcripts** for eligible videos.
+5.  **Generates one summary per video** (TL;DR, key points, optional quotes).
+6.  **Saves locally** under `output_dir` and records IDs in
+    `processed_videos.json`.
+7.  **Emails the summary** to `default_recipients`, with optional per-channel
+    BCC.
+8.  **Sends one admin alert** to `default_recipients` when videos fail, quotas
+    change, a model is unavailable, or the run crashes.
+9.  **Weekly digest (optional):** `weekly_summary.py` emails each recipient
+    one combined digest of the week's videos, plus a cross-video threads
+    overview.
 
 ## Features
 
-*   One LLM generation request per video (plus a separate weekly threads request in the digest).
-*   Google Gen AI SDK (new `google-genai` package) with async support.
-*   Configurable rate limiting for YouTube and Gemini APIs.
-*   Automatic retry with exponential backoff for Gemini API calls.
+*   One LLM generation request per video (plus a separate weekly threads
+    request in the digest).
+*   Google Gen AI SDK (`google-genai`) or a remote OpenAI-compatible server.
+*   Configurable rate limiting for YouTube and LLM APIs.
+*   Automatic retry with exponential backoff for LLM calls.
 *   Circuit breaker pattern to prevent cascading failures.
-*   Model availability validation with automatic suggestions when models are deprecated.
+*   Model availability validation with suggestions when Gemini models are
+    deprecated.
 *   Problem-only administrative alerts with model and quota diagnostics.
 *   Structured logging with file rotation.
 *   Custom exception hierarchy for robust error handling.
 *   Dry run mode for testing email notifications without sending.
 *   INI configuration file for all settings.
-*   Wrapper scripts for easy execution (`run.py` for Windows, `run.sh` for Linux/macOS).
+*   Wrapper scripts for easy execution (`run.py` for Windows, `run.sh` for
+    Linux/macOS).
 
 ## Prerequisites
 
@@ -52,8 +94,9 @@ The application performs the following actions:
 ```
 gemini-youtube-parser/
 ├── config/                    # Configuration loading and validation
-│   ├── __init__.py
-│   └── models.py              # Data classes (Config, Video, etc.)
+│   ├── __init__.py            # config.ini loader (UTF-8)
+│   ├── models.py              # Data classes (Config, Video, etc.)
+│   └── summary.py             # summary.ini loader for the weekly digest
 ├── services/                  # Core business logic
 │   ├── exceptions.py          # Custom exceptions
 │   ├── rate_limiter.py        # Sliding window rate limiter
@@ -69,6 +112,7 @@ gemini-youtube-parser/
 │   └── helpers.py             # String/date utilities
 ├── main.py                    # Async entry point (daily monitor)
 ├── weekly_summary.py          # Async entry point (weekly digest)
+├── grab_video.py              # One-off: summarize a single YouTube URL
 ├── run.py                     # Windows wrapper
 ├── run.sh                     # Linux/macOS wrapper
 ├── setup.py                   # Setup script
@@ -100,7 +144,10 @@ gemini-youtube-parser/
     *   **`[API_KEYS]`**: `youtube_api_key`; `gemini_api_key` is required only when using Gemini.
     *   **`[LLM]`**: Provider selection and remote llama.cpp connection settings.
     *   **`[CHANNELS]`**: One YouTube Channel ID per line (e.g., `My Channel = UCxxxxxxxxxxxxxx`).
-    *   **`[GEMINI]`**: `model_name` (e.g., `gemini-2.5-flash`), prompts, and optional `safety_settings`.
+    *   **`[GEMINI]`**: `model_name` (used when `provider = gemini`),
+        `prompt_summary` (the single per-video prompt; must include
+        `{transcript}`), `prompt_weekly_threads` (digest-only), and optional
+        `safety_settings`. Save `config.ini` as UTF-8.
     *   **`[EMAIL]`**: SMTP server, port, credentials, and sender email.
     *   **`[CHANNEL_RECIPIENTS]`**: `default_recipients` and optional per-channel recipients.
     *   **`[SETTINGS]`**: File paths, `max_results_per_channel`, `min_video_duration_minutes`, `log_level`.
@@ -226,6 +273,16 @@ python run.py
 ./run.sh
 ```
 
+### One-off video
+
+```bash
+.venv/bin/python grab_video.py 'https://www.youtube.com/watch?v=VIDEO_ID'
+```
+
+Uses the same `prompt_summary` as the daily monitor and writes one summary
+file (plus the full transcript) under `output_dir`. It does not send email
+or update `processed_videos.json`.
+
 ### Scheduling
 
 *   **Linux/macOS:** Use cron to run `python3 /path/to/project/run.sh` at your desired interval.
@@ -235,9 +292,12 @@ python run.py
 
 `weekly_summary.py` is a separate, independent script intended to run once a
 week (for example, Monday morning) via cron. Unlike the daily monitor, it does
-not track processed/failed video state and does not send a per-video email;
-instead it looks back over a configurable window and sends each recipient one
-combined email covering every video posted across their channels.
+not track processed/failed video state and does not send a per-video email.
+It looks back over a configurable window, generates **one summary per video**
+with the same `prompt_summary` used by the daily monitor, then makes **one
+extra LLM call per recipient** (`prompt_weekly_threads`) to produce a
+"Threads of the Week" overview. The email lists that overview first, then
+each video in chronological order.
 
 ### Setup
 
@@ -351,6 +411,37 @@ alert used for Gemini failures.
 
 ## Configuration Reference
 
+### `[LLM]`
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `provider` | `gemini` | `gemini`, `llama_cpp`, or `openai_compatible` |
+| `summary_max_output_tokens` | 1024 | Cap for the single per-video summary |
+| `weekly_threads_max_output_tokens` | 4096 | Cap for the weekly threads overview |
+| `temperature` | 0.7 | Sampling temperature for OpenAI-compatible servers |
+| `request_timeout` | 300 | Seconds to wait for a remote LLM response |
+| `context_tokens` | 262144 | Declared context size; used to reject likely overflows |
+
+`max_output_tokens` is still accepted and applies to both the per-video
+summary and the weekly threads overview. `executive_max_output_tokens` is
+used as the summary cap when `summary_max_output_tokens` is absent.
+
+### `[GEMINI]`
+
+Prompts in this section are used for **every** LLM provider, not only Gemini.
+`model_name` and `safety_settings` apply only when `provider = gemini`.
+
+| Setting | Description |
+|---------|-------------|
+| `prompt_summary` | Single-pass per-video prompt. Must contain `{transcript}`. |
+| `prompt_weekly_threads` | Weekly digest synthesis prompt. `{transcript}` receives all of a recipient's transcripts concatenated. |
+| `model_name` | Gemini model id (ignored for llama.cpp / OpenAI-compatible). |
+| `safety_settings` | Optional Gemini harm-category thresholds. |
+
+If `prompt_summary` is missing, `prompt_executive_summary` is used as a
+legacy fallback. `prompt_detailed_summary` and `prompt_key_quotes` are no
+longer called.
+
 ### `[RATE_LIMITS]`
 
 Controls API request rates to avoid hitting quotas:
@@ -408,8 +499,8 @@ models automatically.
 
 The application uses a layered error handling approach:
 
-*   **Retry with backoff:** Gemini API calls retry up to 3 times with exponential delays.
-*   **Circuit breaker:** After 5 consecutive failures, Gemini calls are temporarily skipped.
+*   **Retry with backoff:** LLM API calls retry up to 3 times with exponential delays.
+*   **Circuit breaker:** After 5 consecutive failures, LLM calls are temporarily skipped.
 *   **Rate limiting:** Sliding window trackers enforce per-minute and per-day limits.
 *   **Custom exceptions:** Specific exception types (`ModelNotFoundError`, `RateLimitExceeded`, etc.) for targeted handling.
 *   **Administrative alerts:** Failed videos, exhausted retries, model drift, quota errors, circuit-breaker events, and fatal crashes are consolidated into one email to `default_recipients`.
