@@ -6,6 +6,9 @@ import re
 import sys
 
 from config import load_config
+from services.article_summary import generate_article_summary
+from services.article_summary_cache import ArticleSummaryCache
+from services.transcript_cache import TranscriptCache
 from services.youtube import build_youtube_client, get_transcript
 from services.llm import build_summarizer
 from utils.helpers import parse_iso8601_duration, format_duration_seconds
@@ -34,9 +37,11 @@ async def run(video_id: str, output_dir: str | None = None) -> None:
     setup_logging(log_file=config.log_file, log_level=config.log_level)
 
     summarizer = build_summarizer(config)
+    transcript_cache = TranscriptCache(config.transcript_cache_dir)
+    summary_cache = ArticleSummaryCache(config.article_summary_cache_dir)
 
     # Fetch transcript
-    transcript = get_transcript(video_id)
+    transcript = get_transcript(video_id, transcript_cache)
     if not transcript:
         print("ERROR: No transcript available for this video.")
         sys.exit(1)
@@ -58,10 +63,12 @@ async def run(video_id: str, output_dir: str | None = None) -> None:
     duration_s = parse_iso8601_duration(duration_iso)
     duration_str = format_duration_seconds(duration_s)
 
-    summary = await summarizer.generate_summary(
+    summary = await generate_article_summary(
+        config,
+        summarizer,
         transcript,
-        config.prompt_summary,
-        max_output_tokens=config.llm_summary_max_output_tokens,
+        video_id=video_id,
+        summary_cache=summary_cache,
     )
 
     # Sanitize title for filename

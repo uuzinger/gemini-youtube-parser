@@ -7,7 +7,8 @@ from google.api_core.exceptions import GoogleAPIError
 from googleapiclient.discovery import build
 
 from config.models import Video
-from .exceptions import APIError, TranscriptError
+from .exceptions import APIError
+from .transcript_cache import TranscriptCache
 
 logger = logging.getLogger(__name__)
 
@@ -178,8 +179,28 @@ def get_video_details(youtube, video_id: str) -> str | None:
         return None
 
 
-def get_transcript(video_id: str) -> str | None:
+def get_transcript(
+    video_id: str, transcript_cache: TranscriptCache | None = None
+) -> str | None:
     """Fetch transcript for a video with retry logic for transient errors."""
+    if transcript_cache is not None:
+        try:
+            cached_transcript = transcript_cache.get(video_id)
+        except ValueError as e:
+            logger.error("Invalid transcript cache key for %s: %s", video_id, e)
+            return None
+        except OSError as e:
+            logger.warning(
+                "Could not read transcript cache for %s; fetching from YouTube: %s",
+                video_id,
+                e,
+            )
+        else:
+            if cached_transcript is not None:
+                logger.info("Transcript cache hit for video ID: %s", video_id)
+                return cached_transcript
+            logger.info("Transcript cache miss for video ID: %s", video_id)
+
     from xml.etree.ElementTree import ParseError
     from tenacity import (
         retry,
@@ -211,6 +232,15 @@ def get_transcript(video_id: str) -> str | None:
     try:
         transcript_text = _fetch_with_retry()
         logger.info("Successfully fetched transcript for video ID: %s", video_id)
+        if transcript_cache is not None:
+            try:
+                transcript_cache.put(video_id, transcript_text)
+            except OSError as e:
+                logger.warning(
+                    "Could not write transcript cache for %s: %s",
+                    video_id,
+                    e,
+                )
         return transcript_text
     except NoTranscriptFound:
         logger.warning(

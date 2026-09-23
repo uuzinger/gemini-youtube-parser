@@ -20,6 +20,32 @@ HOSTNAME_PATTERN = re.compile(
     r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*"
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
 )
+DEFAULT_PROMPT_EXECUTIVE_SUMMARY = """
+You are summarizing a podcast/video transcript. Write a concise executive
+summary in 2-3 sentences. Focus on the core topic, the most important takeaway,
+and why it matters. Do not list minor tangents or narrate the order of the
+conversation.
+
+TRANSCRIPT:
+{transcript}
+""".strip()
+DEFAULT_PROMPT_BULLET_POINTS = """
+You are summarizing a podcast/video transcript. Extract 8-12 key points as
+markdown bullets. Each bullet should capture one substantial idea, claim, or
+conclusion in 1-2 sentences. Do not use nested bullets. Skip minor tangents,
+repeated points, and chronology.
+
+TRANSCRIPT:
+{transcript}
+""".strip()
+DEFAULT_PROMPT_NOTABLE_QUOTES = """
+You are summarizing a podcast/video transcript. Extract 0-3 notable quotes or
+moments only if they are genuinely striking, surprising, or useful. Use markdown
+bullets. If there are no worthwhile quotes or moments, write "No notable quotes."
+
+TRANSCRIPT:
+{transcript}
+""".strip()
 
 
 def _is_valid_llm_host(host: str) -> bool:
@@ -166,15 +192,30 @@ def load_config(config_path: str = "config.ini") -> Config:
         )
 
     prompt_summary = parser.get("GEMINI", "prompt_summary", fallback="").strip()
-    if not prompt_summary:
-        prompt_summary = parser.get(
-            "GEMINI", "prompt_executive_summary", fallback=""
-        ).strip()
+    prompt_executive_summary = parser.get(
+        "GEMINI", "prompt_executive_summary", fallback=""
+    ).strip()
+    if not prompt_executive_summary:
+        prompt_executive_summary = prompt_summary or DEFAULT_PROMPT_EXECUTIVE_SUMMARY
         if prompt_summary:
             logger.warning(
-                "prompt_summary is unset; using prompt_executive_summary. "
-                "Update [GEMINI] prompt_summary to the single-pass prompt."
+                "prompt_executive_summary is unset; using legacy prompt_summary "
+                "for the executive summary query."
             )
+    prompt_bullet_points = parser.get(
+        "GEMINI",
+        "prompt_bullet_points",
+        fallback=parser.get("GEMINI", "prompt_detailed_summary", fallback=""),
+    ).strip()
+    if not prompt_bullet_points:
+        prompt_bullet_points = DEFAULT_PROMPT_BULLET_POINTS
+    prompt_notable_quotes = parser.get(
+        "GEMINI",
+        "prompt_notable_quotes",
+        fallback=parser.get("GEMINI", "prompt_key_quotes", fallback=""),
+    ).strip()
+    if not prompt_notable_quotes:
+        prompt_notable_quotes = DEFAULT_PROMPT_NOTABLE_QUOTES
 
     config = Config(
         youtube_api_key=parser.get("API_KEYS", "youtube_api_key", fallback=""),
@@ -182,6 +223,9 @@ def load_config(config_path: str = "config.ini") -> Config:
         channel_ids=channel_ids,
         gemini_model=parser.get("GEMINI", "model_name", fallback="gemini-2.5-flash"),
         prompt_summary=prompt_summary,
+        prompt_executive_summary=prompt_executive_summary,
+        prompt_bullet_points=prompt_bullet_points,
+        prompt_notable_quotes=prompt_notable_quotes,
         prompt_weekly_threads=parser.get(
             "GEMINI", "prompt_weekly_threads", fallback=""
         ).strip(),
@@ -198,6 +242,14 @@ def load_config(config_path: str = "config.ini") -> Config:
         ),
         log_file=parser.get("SETTINGS", "log_file", fallback="logs/monitor.log"),
         output_dir=parser.get("SETTINGS", "output_dir", fallback="output_summaries"),
+        transcript_cache_dir=parser.get(
+            "SETTINGS", "transcript_cache_dir", fallback="transcript_cache"
+        ),
+        article_summary_cache_dir=parser.get(
+            "SETTINGS",
+            "article_summary_cache_dir",
+            fallback="article_summary_cache",
+        ),
         max_results_per_channel=parser.getint(
             "SETTINGS", "max_results_per_channel", fallback=3
         ),

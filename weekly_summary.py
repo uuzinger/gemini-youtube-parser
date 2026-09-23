@@ -20,10 +20,13 @@ from datetime import datetime, timedelta, timezone
 from config import load_config
 from config.models import Config, WeeklyConfig, WeeklyVideoEntry
 from config.summary import load_weekly_config
+from services.article_summary import generate_article_summary
+from services.article_summary_cache import ArticleSummaryCache
 from services.email import EmailService
 from services.llm import SummarizerBackend, build_summarizer
 from services.rate_limiter import RateLimiter
 from services.run_report import RunReport
+from services.transcript_cache import TranscriptCache
 from services.youtube import (
     build_youtube_client,
     get_channel_name,
@@ -44,13 +47,15 @@ async def _summarize_video(
     config: Config,
     summarizer: SummarizerBackend,
     llm_limiter: RateLimiter,
+    transcript_cache: TranscriptCache,
+    summary_cache: ArticleSummaryCache,
     channel_name: str,
     video,
     duration_str: str,
     report: RunReport,
 ) -> WeeklyVideoEntry | None:
     """Fetch a transcript and generate one summary for a video."""
-    transcript = get_transcript(video.id)
+    transcript = get_transcript(video.id, transcript_cache)
     if not transcript:
         report.record_video_failure(
             video_id=video.id,
@@ -61,13 +66,14 @@ async def _summarize_video(
         )
         return None
 
-    await llm_limiter.acquire()
-
     try:
-        summary = await summarizer.generate_summary(
+        summary = await generate_article_summary(
+            config,
+            summarizer,
             transcript,
-            config.prompt_summary,
-            max_output_tokens=config.llm_summary_max_output_tokens,
+            video_id=video.id,
+            llm_limiter=llm_limiter,
+            summary_cache=summary_cache,
         )
     finally:
         for issue in summarizer.drain_alert_events():
@@ -188,6 +194,8 @@ async def run_weekly_summary(
     """Summarize the past week's videos per channel and email one digest per recipient."""
     youtube = build_youtube_client(config.youtube_api_key)
     summarizer = build_summarizer(config)
+    transcript_cache = TranscriptCache(config.transcript_cache_dir)
+    summary_cache = ArticleSummaryCache(config.article_summary_cache_dir)
 
     youtube_limiter = RateLimiter(rpm=config.youtube_rpm, rpd=config.youtube_rpd)
     llm_limiter = RateLimiter(rpm=config.gemini_rpm, rpd=config.gemini_rpd)
@@ -254,6 +262,8 @@ async def run_weekly_summary(
                 config,
                 summarizer,
                 llm_limiter,
+                transcript_cache,
+                summary_cache,
                 channel_name,
                 video,
                 duration_str,

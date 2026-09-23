@@ -16,28 +16,32 @@ Each daily run (`main.py` / `run.sh` / `run.py`) does the following:
    `processed_videos.json` or `failed_videos.json` are skipped. Videos shorter
    than `min_video_duration_minutes` are marked processed and skipped.
 3. **Fetch the English transcript.** If none is available, the video is
-   recorded as failed and retried on a later run.
-4. **Generate one summary in a single LLM call.** The transcript is inserted
-   into `[GEMINI] prompt_summary` (the `{transcript}` placeholder). The model
-   is asked for a concise structure: a 2-3 sentence TL;DR, 8-12 key-point
-   bullets, and 0-3 notable quotes if something is genuinely striking. Total
-   output is capped in the prompt at under 300 words, and in the API by
-   `summary_max_output_tokens` (default 1024). There are no separate
-   executive / detailed / quotes generation passes.
+   recorded as failed and retried on a later run. Successful transcript
+   fetches are cached locally by video ID so later runs can reuse them without
+   pulling the same transcript from YouTube again.
+4. **Generate the article summary in three LLM calls.** The transcript is
+   inserted separately into `prompt_executive_summary`, `prompt_bullet_points`,
+   and `prompt_notable_quotes`. The three responses are composed into one
+   markdown summary with Executive Summary, Key Points, and Notable Quotes
+   sections. Each successful section is cached locally by video ID, prompt, and
+   transcript so retries only run missing sections. Each call is capped by
+   `summary_max_output_tokens` (default 1024).
 5. **Save and email.** The markdown summary is written under `output_dir` and
    sent as one HTML email body. Channel-specific recipients are BCC'd in
    addition to `default_recipients`.
 6. **Mark processed** on success. LLM errors, missing transcripts, and email
-   failures go into `failed_videos.json` and the end-of-run admin alert.
+   failures go into `failed_videos.json` and the end-of-run admin alert. On
+   the next daily run, failed videos are retried before new videos; cached
+   transcripts and cached article sections are reused.
 
 Videos are processed one at a time, with a short pause between them. Each
-video uses one generation request (plus one extra Gemini model-list /
+video uses three generation requests (plus one extra Gemini model-list /
 validation request at startup when the provider is Gemini).
 
-The weekly digest (`weekly_summary.py`) reuses the same single-pass
-`prompt_summary` for each video, then makes one additional LLM call per
-recipient using `prompt_weekly_threads` to synthesize a "Threads of the Week"
-overview across that recipient's videos.
+The weekly digest (`weekly_summary.py`) reuses the same three per-video
+article-summary prompts, then makes one additional LLM call per recipient using
+`prompt_weekly_threads` to synthesize a "Threads of the Week" overview across
+that recipient's videos.
 
 ## Overview
 
@@ -45,7 +49,8 @@ overview across that recipient's videos.
 2.  **Detects new videos** published within the last 25 hours.
 3.  **Filters by duration** using `min_video_duration_minutes`.
 4.  **Retrieves English transcripts** for eligible videos.
-5.  **Generates one summary per video** (TL;DR, key points, optional quotes).
+5.  **Generates one summary per video** (executive summary, key points,
+    notable quotes).
 6.  **Saves locally** under `output_dir` and records IDs in
     `processed_videos.json`.
 7.  **Emails the summary** to `default_recipients`, with optional per-channel
@@ -58,7 +63,7 @@ overview across that recipient's videos.
 
 ## Features
 
-*   One LLM generation request per video (plus a separate weekly threads
+*   Three LLM generation requests per video (plus a separate weekly threads
     request in the digest).
 *   Google Gen AI SDK (`google-genai`) or a remote OpenAI-compatible server.
 *   Configurable rate limiting for YouTube and LLM APIs.
@@ -102,10 +107,14 @@ gemini-youtube-parser/
 │   ├── rate_limiter.py        # Sliding window rate limiter
 │   ├── model_validator.py     # Gemini model validation
 │   ├── youtube.py             # YouTube API wrapper
+│   ├── transcript_cache.py    # Local transcript cache
+│   ├── article_summary.py     # Three-query article summary composition
+│   ├── article_summary_cache.py # Local per-section summary cache
 │   ├── gemini.py              # Async Gemini service
 │   ├── llm.py                 # LLM provider interface and factory
 │   ├── openai_compatible.py   # Remote llama.cpp service
 │   ├── email.py               # Async email service
+│   ├── run_report.py          # End-of-run problem report
 │   └── storage.py             # Async file storage
 ├── utils/                     # Utility functions
 │   ├── logging.py             # Structured logging setup
@@ -145,9 +154,10 @@ gemini-youtube-parser/
     *   **`[LLM]`**: Provider selection and remote llama.cpp connection settings.
     *   **`[CHANNELS]`**: One YouTube Channel ID per line (e.g., `My Channel = UCxxxxxxxxxxxxxx`).
     *   **`[GEMINI]`**: `model_name` (used when `provider = gemini`),
-        `prompt_summary` (the single per-video prompt; must include
-        `{transcript}`), `prompt_weekly_threads` (digest-only), and optional
-        `safety_settings`. Save `config.ini` as UTF-8.
+        `prompt_executive_summary`, `prompt_bullet_points`,
+        `prompt_notable_quotes`, `prompt_weekly_threads` (digest-only), and
+        optional `safety_settings`. Prompts must include `{transcript}`. Save
+        `config.ini` as UTF-8.
     *   **`[EMAIL]`**: SMTP server, port, credentials, and sender email.
     *   **`[CHANNEL_RECIPIENTS]`**: `default_recipients` and optional per-channel recipients.
     *   **`[SETTINGS]`**: File paths, `max_results_per_channel`, `min_video_duration_minutes`, `log_level`.
@@ -219,13 +229,12 @@ production `config.ini`, processed-video state, and scheduled job.
     Replace the host, model label, and API key with the values used by your
     server. Do not include `http://`, a port, or `/v1` in `host`.
 
-6.  **Switch to the single-pass video prompt:** Copy `prompt_summary` from
-    `config.ini.example` into `[GEMINI]`. Each video now uses one LLM call
-    instead of three. If `prompt_summary` is absent, the old
-    `prompt_executive_summary` is used as a fallback. You can remove
-    `prompt_detailed_summary` and `prompt_key_quotes`. Set
-    `summary_max_output_tokens` (1024 is enough for the 300-word cap);
-    `weekly_threads_max_output_tokens` is unchanged.
+6.  **Review the three video prompts:** Copy `prompt_executive_summary`,
+    `prompt_bullet_points`, and `prompt_notable_quotes` from
+    `config.ini.example` into `[GEMINI]`. Each video uses three LLM calls.
+    Legacy `prompt_detailed_summary` and `prompt_key_quotes` are still accepted
+    as fallbacks for bullet points and quotes. Set `summary_max_output_tokens`
+    for each per-video call; `weekly_threads_max_output_tokens` is unchanged.
 
 7.  **If continuing with Gemini, review the configured model:** Compare
     `[GEMINI] model_name` with the models available to your API key. The
@@ -236,7 +245,7 @@ production `config.ini`, processed-video state, and scheduled job.
 
 8.  **Review request-rate settings:** Set `gemini_rpm` and `gemini_rpd` to
     values appropriate for your current Google plan. Each processed video
-    makes one generation request, and startup model
+    makes three generation requests, and startup model
     validation makes an additional request. Google does not expose your
     account's quota limits through the model-list API, so quota changes are
     detected and reported when Gemini returns HTTP 429. These legacy setting
@@ -279,9 +288,9 @@ python run.py
 .venv/bin/python grab_video.py 'https://www.youtube.com/watch?v=VIDEO_ID'
 ```
 
-Uses the same `prompt_summary` as the daily monitor and writes one summary
-file (plus the full transcript) under `output_dir`. It does not send email
-or update `processed_videos.json`.
+Uses the same three article-summary prompts as the daily monitor and writes one
+summary file (plus the full transcript) under `output_dir`. It does not send
+email or update `processed_videos.json`.
 
 ### Scheduling
 
@@ -294,8 +303,8 @@ or update `processed_videos.json`.
 week (for example, Monday morning) via cron. Unlike the daily monitor, it does
 not track processed/failed video state and does not send a per-video email.
 It looks back over a configurable window, generates **one summary per video**
-with the same `prompt_summary` used by the daily monitor, then makes **one
-extra LLM call per recipient** (`prompt_weekly_threads`) to produce a
+with the same three article-summary prompts used by the daily monitor, then
+makes **one extra LLM call per recipient** (`prompt_weekly_threads`) to produce a
 "Threads of the Week" overview. The email lists that overview first, then
 each video in chronological order.
 
@@ -319,7 +328,8 @@ each video in chronological order.
 
 2.  **Credentials come from `config.ini`:** `weekly_summary.py` loads
     `config.ini` for the YouTube API key, the configured LLM provider, prompts
-    (`prompt_summary` and `prompt_weekly_threads`), output
+    (`prompt_executive_summary`, `prompt_bullet_points`,
+    `prompt_notable_quotes`, and `prompt_weekly_threads`), output
     token limits, and SMTP settings. There is nothing else to configure for
     credentials.
 
@@ -389,14 +399,14 @@ logged as a warning rather than treated as a failure.
 prompt size before sending and reports likely overflow, but this is an
 approximation rather than model-specific tokenization.
 
-`summary_max_output_tokens` caps the single per-video summary. Increasing it
+`summary_max_output_tokens` caps each per-video summary query. Increasing it
 does not force the model to use all available tokens. If Gemini or llama.cpp
 reports that generation stopped because a limit was reached, the run records
 a failed summary and sends an administrative alert instead of silently
 emailing truncated output. The previous `max_output_tokens` setting is still
-accepted and applies to both the per-video summary and the weekly threads
-overview. Existing `executive_max_output_tokens` values are used as the
-summary cap when `summary_max_output_tokens` is absent.
+accepted and applies to both the per-video summary queries and the weekly
+threads overview. Existing `executive_max_output_tokens` values are used as
+the per-video query cap when `summary_max_output_tokens` is absent.
 
 With `use_tls = False`, the API key and full video transcripts travel as
 unencrypted HTTP. Use this only on a trusted, access-controlled network. For
@@ -416,15 +426,15 @@ alert used for Gemini failures.
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `provider` | `gemini` | `gemini`, `llama_cpp`, or `openai_compatible` |
-| `summary_max_output_tokens` | 1024 | Cap for the single per-video summary |
+| `summary_max_output_tokens` | 1024 | Cap for each per-video summary query |
 | `weekly_threads_max_output_tokens` | 4096 | Cap for the weekly threads overview |
 | `temperature` | 0.7 | Sampling temperature for OpenAI-compatible servers |
 | `request_timeout` | 300 | Seconds to wait for a remote LLM response |
 | `context_tokens` | 262144 | Declared context size; used to reject likely overflows |
 
 `max_output_tokens` is still accepted and applies to both the per-video
-summary and the weekly threads overview. `executive_max_output_tokens` is
-used as the summary cap when `summary_max_output_tokens` is absent.
+summary queries and the weekly threads overview. `executive_max_output_tokens`
+is used as the per-video query cap when `summary_max_output_tokens` is absent.
 
 ### `[GEMINI]`
 
@@ -433,14 +443,17 @@ Prompts in this section are used for **every** LLM provider, not only Gemini.
 
 | Setting | Description |
 |---------|-------------|
-| `prompt_summary` | Single-pass per-video prompt. Must contain `{transcript}`. |
+| `prompt_executive_summary` | Per-video executive summary prompt. Must contain `{transcript}`. |
+| `prompt_bullet_points` | Per-video bullet-points prompt. Must contain `{transcript}`. |
+| `prompt_notable_quotes` | Per-video notable-quotes prompt. Must contain `{transcript}`. |
 | `prompt_weekly_threads` | Weekly digest synthesis prompt. `{transcript}` receives all of a recipient's transcripts concatenated. |
 | `model_name` | Gemini model id (ignored for llama.cpp / OpenAI-compatible). |
 | `safety_settings` | Optional Gemini harm-category thresholds. |
 
-If `prompt_summary` is missing, `prompt_executive_summary` is used as a
-legacy fallback. `prompt_detailed_summary` and `prompt_key_quotes` are no
-longer called.
+If `prompt_executive_summary` is missing, legacy `prompt_summary` is used for
+the executive-summary query. Legacy `prompt_detailed_summary` and
+`prompt_key_quotes` are still accepted as fallbacks for `prompt_bullet_points`
+and `prompt_notable_quotes`.
 
 ### `[RATE_LIMITS]`
 
@@ -460,10 +473,23 @@ Controls API request rates to avoid hitting quotas:
 | `processed_videos_file` | `processed_videos.json` | File tracking processed video IDs |
 | `log_file` | `logs/monitor.log` | Log file path |
 | `output_dir` | `output_summaries` | Directory for saved summaries |
+| `transcript_cache_dir` | `transcript_cache` | Local cache for successful transcript fetches |
+| `article_summary_cache_dir` | `article_summary_cache` | Local cache for completed article summary sections |
 | `max_results_per_channel` | 3 | Videos to check per channel per run |
 | `min_video_duration_minutes` | 5 | Skip videos shorter than this |
 | `log_level` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) |
 | `dry_run` | `False` | If True, logs email content instead of sending |
+
+The transcript cache is shared by the daily monitor, weekly digest, and
+`grab_video.py`. It stores full transcripts as local text files, so it is
+gitignored by default; delete a cached file or the whole directory to force a
+fresh transcript fetch.
+
+The article-summary cache is also shared by the daily monitor, weekly digest,
+and `grab_video.py`. It stores completed Executive Summary, Key Points, and
+Notable Quotes sections separately. Each cached section includes a hash of the
+prompt and transcript, so editing a prompt or refreshing a transcript causes
+that section to be regenerated.
 
 ### `[ALERTS]`
 
