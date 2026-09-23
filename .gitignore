@@ -18,6 +18,8 @@ logs/
 
 # Data files
 processed_videos.json
+transcript_cache/
+article_summary_cache/
 .model_suggestion
 config.ini
 summary.ini

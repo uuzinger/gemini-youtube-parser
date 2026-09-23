@@ -62,19 +62,29 @@ model_name = gemini-3.1-flash-lite-preview
 
 # --- Prompts for the AI ---
 # These prompts are used by Gemini and OpenAI-compatible providers.
-# Use {transcript} as the placeholder for the video transcript.
+# Use {transcript} as the placeholder for the video transcript. Each video
+# uses three separate LLM calls, one prompt per article section.
 
-prompt_summary =
-  You are summarizing a podcast/video transcript. Produce a concise summary, not an exhaustive one. Follow this exact structure:
-  1. TL;DR (2-3 sentences max): What is this conversation fundamentally about, and what's the core takeaway?
-  2. Key Points (8-12 bullets max, no sub-bullets): The main ideas, arguments, or claims discussed - one bullet per idea, not per detail. Each bullet should be 1-2 sentences. Skip anecdotes, examples, and side tangents unless they ARE the point being made.
-  3. Notable Quotes or Moments (0-3, optional): Only include if something genuinely striking, quotable, or surprising was said.
-  Hard constraints:
-  - Total output must be under 300 words.
-  - Do not create a new heading or bullet for every topic shift in the conversation: group related sub-discussions into a single bullet.
-  - Do not narrate the structure of the conversation ("they discussed X, then moved to Y, then Rogan asked about Z"). Report conclusions and ideas, not the sequence of the conversation.
-  - No nested bullets. If you need three levels of hierarchy, you're being too detailed, so collapse it.
-  - Prioritize the 20% of content that carries 80% of the meaning. It is fine, and expected, to drop minor tangents, personal anecdotes, and repeated points entirely.
+prompt_executive_summary =
+  You are summarizing a podcast/video transcript. Write a concise executive
+  summary in 2-3 sentences. Focus on the core topic, the most important takeaway,
+  and why it matters. Do not list minor tangents or narrate the order of the
+  conversation.
+  TRANSCRIPT:
+  {transcript}
+
+prompt_bullet_points =
+  You are summarizing a podcast/video transcript. Extract 8-12 key points as
+  markdown bullets. Each bullet should capture one substantial idea, claim, or
+  conclusion in 1-2 sentences. Do not use nested bullets. Skip minor tangents,
+  repeated points, and chronology.
+  TRANSCRIPT:
+  {transcript}
+
+prompt_notable_quotes =
+  You are summarizing a podcast/video transcript. Extract 0-3 notable quotes or
+  moments only if they are genuinely striking, surprising, or useful. Use markdown
+  bullets. If there are no worthwhile quotes or moments, write "No notable quotes."
   TRANSCRIPT:
   {transcript}
 
@@ -144,6 +154,12 @@ log_file = logs/monitor.log
 
 # Directory to save the text summaries.
 output_dir = output_summaries
+
+# Directory to cache successful transcript fetches by video ID.
+transcript_cache_dir = transcript_cache
+
+# Directory to cache completed article summary sections by video ID.
+article_summary_cache_dir = article_summary_cache
 
 # How many of the latest videos to check per channel on each run.
 # A higher number helps catch videos if the script hasn't run in a while.

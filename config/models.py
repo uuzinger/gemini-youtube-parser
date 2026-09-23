@@ -51,6 +51,9 @@ class Config:
     channel_ids: list[str]
     gemini_model: str
     prompt_summary: str
+    prompt_executive_summary: str
+    prompt_bullet_points: str
+    prompt_notable_quotes: str
     prompt_weekly_threads: str
     safety_settings: list[dict[str, str]] | None
     smtp_server: str
@@ -63,6 +66,8 @@ class Config:
     processed_videos_file: str
     log_file: str
     output_dir: str
+    transcript_cache_dir: str
+    article_summary_cache_dir: str
     max_results_per_channel: int
     min_video_duration_minutes: int
     log_level: str = "INFO"

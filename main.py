@@ -16,8 +16,11 @@ from services.youtube import (
     get_transcript,
 )
 from services.email import EmailService
+from services.article_summary_cache import ArticleSummaryCache
+from services.article_summary import generate_article_summary
 from services.llm import SummarizerBackend, build_summarizer
 from services.storage import StorageService
+from services.transcript_cache import TranscriptCache
 from services.rate_limiter import RateLimiter
 from services.model_validator import (
     validate_model,
@@ -90,6 +93,8 @@ async def process_video(
     summarizer: SummarizerBackend,
     email_service: EmailService,
     storage_service: StorageService,
+    transcript_cache: TranscriptCache,
+    summary_cache: ArticleSummaryCache,
     youtube_limiter: RateLimiter,
     llm_limiter: RateLimiter,
     channel_name: str,
@@ -120,11 +125,8 @@ async def process_video(
         await storage_service.save_failed_videos()
         return
 
-    # Rate limit the configured LLM provider.
-    await llm_limiter.acquire()
-
     # Fetch transcript
-    transcript = get_transcript(video_id)
+    transcript = get_transcript(video_id, transcript_cache)
     if not transcript:
         await record_video_failure(
             storage_service,
@@ -136,10 +138,13 @@ async def process_video(
         return
 
     try:
-        summary = await summarizer.generate_summary(
+        summary = await generate_article_summary(
+            config,
+            summarizer,
             transcript,
-            config.prompt_summary,
-            max_output_tokens=config.llm_summary_max_output_tokens,
+            video_id=video_id,
+            llm_limiter=llm_limiter,
+            summary_cache=summary_cache,
         )
     except ModelNotFoundError as e:
         error_msg = f"Model not found: {e}"
@@ -230,6 +235,8 @@ async def run_monitor(
     # Initialize services
     summarizer = build_summarizer(config)
     storage_service = StorageService(config)
+    transcript_cache = TranscriptCache(config.transcript_cache_dir)
+    summary_cache = ArticleSummaryCache(config.article_summary_cache_dir)
 
     # Rate limiters
     youtube_limiter = RateLimiter(
@@ -329,6 +336,8 @@ async def run_monitor(
                 summarizer,
                 email_service,
                 storage_service,
+                transcript_cache,
+                summary_cache,
                 youtube_limiter,
                 llm_limiter,
                 channel_name,
@@ -367,6 +376,8 @@ async def run_monitor(
                 summarizer,
                 email_service,
                 storage_service,
+                transcript_cache,
+                summary_cache,
                 youtube_limiter,
                 llm_limiter,
                 channel_name,

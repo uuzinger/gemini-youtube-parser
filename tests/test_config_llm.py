@@ -163,6 +163,10 @@ prompt_summary = Single pass {transcript}
     config = load_config(str(config_file))
 
     assert config.prompt_summary == "Single pass {transcript}"
+    assert config.prompt_executive_summary == "Single pass {transcript}"
+    assert "{transcript}" in config.prompt_bullet_points
+    assert "{transcript}" in config.prompt_notable_quotes
+    assert config.article_summary_cache_dir == "article_summary_cache"
     assert config.llm_summary_max_output_tokens == 1024
 
 
@@ -200,6 +204,7 @@ def test_non_ascii_prompt_is_read_as_utf8(tmp_path) -> None:
     config = load_config(str(config_file))
 
     assert config.prompt_summary == "One bullet per idea \u2014 not per detail"
+    assert config.prompt_executive_summary == "One bullet per idea \u2014 not per detail"
 
 
 def test_non_utf8_config_raises_actionable_error(tmp_path) -> None:
@@ -240,7 +245,43 @@ prompt_executive_summary = Legacy exec {transcript}
 
     config = load_config(str(config_file))
 
-    assert config.prompt_summary == "Legacy exec {transcript}"
+    assert config.prompt_summary == ""
+    assert config.prompt_executive_summary == "Legacy exec {transcript}"
+
+
+def test_loads_three_article_summary_prompts(tmp_path) -> None:
+    config_file = tmp_path / "config.ini"
+    config_file.write_text(
+        """
+[API_KEYS]
+youtube_api_key = youtube-example-key
+gemini_api_key = gemini-example-key
+
+[CHANNELS]
+Example = UCaaaaaaaaaaaaaaaaaaaaaa
+
+[EMAIL]
+smtp_server = smtp.example.com
+smtp_user = monitor@example.com
+smtp_password = example-password
+sender_email = monitor@example.com
+
+[CHANNEL_RECIPIENTS]
+default_recipients = admin@example.com
+
+[GEMINI]
+prompt_executive_summary = Exec {transcript}
+prompt_bullet_points = Bullets {transcript}
+prompt_notable_quotes = Quotes {transcript}
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(str(config_file))
+
+    assert config.prompt_executive_summary == "Exec {transcript}"
+    assert config.prompt_bullet_points == "Bullets {transcript}"
+    assert config.prompt_notable_quotes == "Quotes {transcript}"
 
 
 def test_summary_max_output_tokens_overrides_legacy(tmp_path) -> None:
